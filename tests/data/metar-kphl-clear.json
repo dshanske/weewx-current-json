@@ -1,0 +1,27 @@
+[
+    {
+        "icaoId": "KPHL",
+        "receiptTime": "2026-10-23T04:58:06.361Z",
+        "obsTime": 1792731240,
+        "reportTime": "2026-10-23T05:00:00.000Z",
+        "temp": 13.9,
+        "dewp": 6.1,
+        "wdir": 360,
+        "wspd": 9,
+        "visib": "10+",
+        "altim": 1020.7,
+        "slp": 1020.7,
+        "qcField": 12,
+        "maxT24": 21.1,
+        "minT24": 7.8,
+        "metarType": "METAR",
+        "rawOb": "METAR KPHL 230454Z 36009KT 10SM CLR 14/06 A3014 RMK AO2 SLP207 T01390061 402110078 $",
+        "lat": 39.8733,
+        "lon": -75.2268,
+        "elev": 2,
+        "name": "Philadelphia Intl, PA, US",
+        "cover": "CLR",
+        "clouds": [],
+        "fltCat": "VFR"
+    }
+]

@@ -1,0 +1,5 @@
+# Left out of the release zip.
+tests export-ignore
+.gitignore export-ignore
+.gitattributes export-ignore
+bin/user/__init__.py export-ignore
