@@ -83,6 +83,18 @@ CONFIG = """
         #voc_index = voc
         #uv = none
 
+    [[Forecast]]
+        # If weewx-nws is installed, its NWS forecast and alerts are added to the file. Set
+        # enable to false to leave them out.
+        #enable = true
+
+        # Most one-hour forecasts, and twelve-hour forecast periods, to include. 0 for none.
+        #hours = 24
+        #periods = 14
+
+        # Whether to include the active NWS alerts.
+        #alerts = true
+
 [StdReport]
     [[CurrentJSON]]
         skin = CurrentJSON
@@ -104,7 +116,8 @@ class CurrentJSONInstaller(ExtensionInstaller):
             author_email='david@shanske.com',
             config=configobj.ConfigObj(StringIO(CONFIG)),
             files=[
-                ('bin/user', ['bin/user/current_json.py', 'bin/user/current_json_air.py', 'bin/user/current_json_conditions.py']),
+                ('bin/user', ['bin/user/current_json.py', 'bin/user/current_json_air.py', 'bin/user/current_json_conditions.py',
+                              'bin/user/current_json_forecast.py']),
                 ('skins/CurrentJSON', ['skins/CurrentJSON/skin.conf']),
             ],
         )

@@ -21,3 +21,6 @@
 * The installer's settings include `cloud_sources`, `[[AirQuality]]` and `[[Fields]]`.
 * Includes a snow sensor's readings: `snow`, the snowfall in the last hour, summed like rain; `snowdepth`,
   from `snowDepth`; and `snowrate`, from `snowRate`. Falling snow it measures is the snow condition (#7).
+* Adds the National Weather Service forecast and alerts from weewx-nws, if it's installed, as an optional
+  `forecast` section: the one-hour forecasts, the twelve-hour periods and the active alerts, set by
+  `[[Forecast]]`. The rest of the file doesn't change.

@@ -16,7 +16,8 @@ weather provider of the Simple Location WordPress plugin:
       "units": "metric",
       "station": {"id": "...", "name": "...", "latitude": ..., "longitude": ..., "altitude": ...},
       "observations": {"temperature": 21.5, "humidity": 60, ...},
-      "derived": {"code": "sensors_clouds", "cloudiness": "sensors_clouds", "aqi": "us_epa"}
+      "derived": {"code": "sensors_clouds", "cloudiness": "sensors_clouds", "aqi": "us_epa"},
+      "forecast": {"source": "nws", "hourly": [...], "periods": [...], "alerts": [...]}
     }
 
 Values are in metric units, WeeWX's METRICWX system: degrees C, hPa
@@ -24,7 +25,9 @@ Values are in metric units, WeeWX's METRICWX system: degrees C, hPa
 have are left out. The condition code and cloud cover, which WeeWX doesn't have, are derived as
 described in user.current_json_conditions, and "derived" says which source gave each. The air
 quality index, with its category and color, is calculated as described in user.current_json_air,
-and "derived" names its scale.
+and "derived" names its scale. If weewx-nws is installed, "forecast" holds its forecast and
+alerts, as described in user.current_json_forecast; it is optional, and adds to the format without
+changing anything else in it.
 """
 
 import json
@@ -42,6 +45,7 @@ from weeutil.weeutil import TimeSpan, to_bool
 
 import user.current_json_air as air
 import user.current_json_conditions as conditions
+import user.current_json_forecast as forecasts
 
 log = logging.getLogger(__name__)
 
@@ -191,7 +195,7 @@ def station_from_config(config_dict, stn_info=None):
 
 
 def build_document(record, station, observations, code=None, source=None, cloudiness=None, cloud_source=None,
-                   air_quality=None, aqi_scale=None):
+                   air_quality=None, aqi_scale=None, forecast=None):
     """Returns the JSON document, as a dict.
 
     Args:
@@ -205,6 +209,8 @@ def build_document(record, station, observations, code=None, source=None, cloudi
         air_quality (dict|None): 'aqi', 'aqi_category' and 'aqi_color', from
             user.current_json_air.air_quality(), or empty without an index.
         aqi_scale (str|None): The scale of the index.
+        forecast (dict|None): The forecast section, from user.current_json_forecast.read_forecast(),
+            or empty to leave it out.
     """
     document = {
         'format': FORMAT,
@@ -226,6 +232,8 @@ def build_document(record, station, observations, code=None, source=None, cloudi
         derived['aqi'] = aqi_scale
     if derived:
         document['derived'] = derived
+    if forecast:
+        document['forecast'] = forecast
     document['generator'] = 'weewx-current-json %s; WeeWX %s' % (VERSION, weewx.__version__)
     return document
 
@@ -273,10 +281,11 @@ class CurrentJSONGenerator(weewx.reportengine.ReportGenerator):
         )
 
         user_agent = sloc_dict.get('user_agent') or ('weewx-current-json/%s' % VERSION)
+        nws_manager_opener = self.nws_manager_opener()
         sources = conditions.ConditionSources(
             sloc_dict.get('Conditions', {}),
             user_agent,
-            nws_manager_opener=self.nws_manager_opener(),
+            nws_manager_opener=nws_manager_opener,
         )
         metric = weewx.units.to_METRICWX(record)
         code, source = sources.condition(
@@ -310,6 +319,7 @@ class CurrentJSONGenerator(weewx.reportengine.ReportGenerator):
             cloud_source,
             air_quality,
             aqi_scale,
+            self.forecast(nws_manager_opener, sloc_dict.get('Forecast', {}), timestamp),
         )
         path = os.path.join(self.html_root(), sloc_dict.get('filename', 'current.json'))
         write_atomically(path, document)
@@ -369,6 +379,19 @@ class CurrentJSONGenerator(weewx.reportengine.ReportGenerator):
                 mean = weewx.units.convert(mean, 'microgram_per_meter_cubed')
             means.append(float(mean.value))
         return means
+
+    @staticmethod
+    def forecast(nws_manager_opener, forecast_dict, timestamp):
+        """Returns the forecast section from weewx-nws, or None without weewx-nws or with [[Forecast]] disabled."""
+        options = forecasts.options_from_config(forecast_dict)
+        if options is None or nws_manager_opener is None:
+            return None
+        try:
+            with nws_manager_opener() as manager:
+                return forecasts.read_forecast(manager, timestamp, **options)
+        except Exception as e:  # noqa: BLE001 - weewx-nws's database unavailable or not as expected
+            log.info("Could not read the weewx-nws forecast: %s", e)
+            return None
 
     def nws_manager_opener(self):
         """Returns a function opening weewx-nws's database, or None if weewx-nws isn't configured."""
