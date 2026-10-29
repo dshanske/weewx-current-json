@@ -50,8 +50,8 @@ VERSION = '0.1.0'
 FORMAT = 'current-conditions'
 FORMAT_VERSION = 1
 
-# WeeWX observation types and the key each one becomes in the file. Rain is the last hour's
-# total, added separately, and lightning only feeds the condition. [CurrentJSON] [[Fields]] can
+# WeeWX observation types and the key each one becomes in the file. Rain and snow are the last
+# hour's totals, added separately, and lightning only feeds the condition. [CurrentJSON] [[Fields]] can
 # read a key from another WeeWX field; see fields_from_config().
 OBSERVATIONS = {
     'outTemp': 'temperature',
@@ -64,6 +64,9 @@ OBSERVATIONS = {
     'windDir': 'winddegree',
     'windGust': 'windgust',
     'rainRate': 'rainrate',
+    # A snow sensor's depth on the ground and rate of snowfall.
+    'snowDepth': 'snowdepth',
+    'snowRate': 'snowrate',
     'radiation': 'radiation',
     'illuminance': 'illuminance',
     'UV': 'uv',
@@ -125,7 +128,7 @@ def fields_from_config(sloc_dict):
     return fields
 
 
-def observations_from_record(record, hour_rain_mm=None, fields=None):
+def observations_from_record(record, hour_rain_mm=None, fields=None, hour_snow_mm=None):
     """Converts an archive record to the file's observations.
 
     Args:
@@ -133,6 +136,7 @@ def observations_from_record(record, hour_rain_mm=None, fields=None):
         hour_rain_mm (float|None): Rain in the hour ending at the record, in mm.
         fields (dict|None): File keys keyed by WeeWX field, from fields_from_config(). Default
             OBSERVATIONS.
+        hour_snow_mm (float|None): Snowfall in the hour ending at the record, in mm.
 
     Returns:
         dict: Observations keyed by the file's names, in its units, without missing readings.
@@ -146,6 +150,8 @@ def observations_from_record(record, hour_rain_mm=None, fields=None):
             observations[key] = int(round(float(value))) if precision == 0 else round(float(value), precision)
     if isinstance(hour_rain_mm, (int, float)) and not isinstance(hour_rain_mm, bool):
         observations['rain'] = round(float(hour_rain_mm), 2)
+    if isinstance(hour_snow_mm, (int, float)) and not isinstance(hour_snow_mm, bool):
+        observations['snow'] = round(float(hour_snow_mm), 2)
     return observations
 
 
@@ -259,7 +265,12 @@ class CurrentJSONGenerator(weewx.reportengine.ReportGenerator):
 
         timestamp = record['dateTime']
         fields = fields_from_config(sloc_dict)
-        observations = observations_from_record(record, self.hour_rain(manager, timestamp), fields)
+        observations = observations_from_record(
+            record,
+            self.hour_rain(manager, timestamp),
+            fields,
+            self.hour_total(manager, 'snow', timestamp),
+        )
 
         user_agent = sloc_dict.get('user_agent') or ('weewx-current-json/%s' % VERSION)
         sources = conditions.ConditionSources(
@@ -312,8 +323,16 @@ class CurrentJSONGenerator(weewx.reportengine.ReportGenerator):
     @staticmethod
     def hour_rain(manager, timestamp):
         """Returns the rain in the hour ending at timestamp, in mm, or None without a rain gauge."""
+        return CurrentJSONGenerator.hour_total(manager, 'rain', timestamp)
+
+    @staticmethod
+    def hour_total(manager, field, timestamp):
+        """Returns the total of a field, such as rain or snow, in the hour ending at timestamp, in mm.
+
+        Returns None without the sensor: the field isn't in the archive, or has no values that hour.
+        """
         try:
-            total = weewx.xtypes.get_aggregate('rain', TimeSpan(timestamp - 3600, timestamp), 'sum', manager)
+            total = weewx.xtypes.get_aggregate(field, TimeSpan(timestamp - 3600, timestamp), 'sum', manager)
         except (weewx.UnknownType, weewx.UnknownAggregation):
             return None
         if total is None or total.value is None:

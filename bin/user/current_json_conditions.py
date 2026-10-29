@@ -9,8 +9,8 @@ WeeWX measures the weather but has no notion of "conditions", such as "rain" or 
 This module derives one from up to six sources, tried in a configurable order; the first that
 gives a condition wins:
 
-    sensors_precipitation   Lightning, rain and snow from the station's own sensors, and fog from
-                            its humidity and dewpoint.
+    sensors_precipitation   Lightning, rain and snow from the station's own sensors (a snow sensor,
+                            or rain below freezing), and fog from its humidity and dewpoint.
     sensors_air             Smoke or haze, from the station's PM2.5 and VOC index.
     metar                   The latest METAR of a nearby airport, from aviationweather.gov.
     sensors_clouds          Daytime cloud cover, from solar radiation (or illuminance) compared
@@ -199,9 +199,18 @@ def from_sensors_precipitation(observations, thresholds, lightning_count=None):
     rain = _number(observations, 'rain')
     temperature = _number(observations, 'temperature')
     raining = (rate is not None and rate > 0) or (rain is not None and rain > 0)
+    snow_rate = _number(observations, 'snowrate')
+    snow = _number(observations, 'snow')
+    snowing = (snow_rate is not None and snow_rate > 0) or (snow is not None and snow > 0)
 
     if lightning_count is not None and lightning_count > 0:
-        return 201 if raining else 211
+        return 201 if (raining or snowing) else 211
+
+    # A snow sensor measures falling snow; with rain above freezing too, it is rain and snow.
+    if snowing:
+        if raining and (temperature is None or temperature > thresholds['snow_temperature']):
+            return 616
+        return 601
 
     if raining:
         if temperature is not None and temperature <= thresholds['snow_temperature']:

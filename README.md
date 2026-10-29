@@ -72,7 +72,7 @@ used, and the file says which one did. Remove a source from the list to skip it.
 
 | Source | From | Gives |
 |---|---|---|
-| `sensors_precipitation` | Your lightning sensor, rain gauge, temperature, humidity and dewpoint | Thunderstorm when lightning was detected this interval; snow at or below 0 °C, rain and snow below 2 °C, otherwise light, moderate or heavy rain by rain rate; fog or mist when the air is calm and saturated |
+| `sensors_precipitation` | Your lightning sensor, rain gauge, snow sensor, temperature, humidity and dewpoint | Thunderstorm when lightning was detected this interval; snow when a snow sensor measures falling snow (rain and snow if it is also raining above 0 °C); otherwise snow at or below 0 °C, rain and snow below 2 °C, otherwise light, moderate or heavy rain by rain rate; fog or mist when the air is calm and saturated |
 | `sensors_air` | Your PM2.5 sensor, and a gas sensor's VOC index if you have one | Smoke when PM2.5 and the VOC index are both raised; haze when PM2.5 is raised in dry air without the VOCs. Before the sunlight, so a smoky sky isn't reported as just cloudy. |
 | `metar` | The latest METAR of the airport in `metar_station`, from [aviationweather.gov](https://aviationweather.gov) | The reported weather (rain, snow, thunderstorm, fog…) or sky cover. Used only if no more than `metar_max_age` minutes old. Fetched at most once each time the file is written, and only when a source before it, for the condition or the cloud cover, gave nothing. |
 | `sensors_clouds` | Your solar radiation sensor, compared with WeeWX's clear-sky maximum (`maxSolarRad`); without one, your illuminance (lux) sensor, at about 120 lux per W/m² | Clear, few, scattered, broken or overcast, in daytime only |
@@ -212,6 +212,8 @@ The file uses version 1 of the current conditions format:
   |---|---|---|---|
   | `outTemp` | `temperature` | `rainRate` | `rainrate` |
   | `outHumidity` | `humidity` | rain in the last hour | `rain` |
+  | `snowRate` | `snowrate` | snow in the last hour | `snow` |
+  | `snowDepth` | `snowdepth` | | |
   | `dewpoint` | `dewpoint` | `radiation` | `radiation` |
   | `heatindex` | `heatindex` | `illuminance` | `illuminance` |
   | `windchill` | `windchill` | `UV` | `uv` |

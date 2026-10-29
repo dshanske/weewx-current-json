@@ -49,6 +49,15 @@ class TestPrecipitation(unittest.TestCase):
         self.assertEqual(601, c.from_sensors_precipitation({'temperature': 0, 'rainrate': 1}, T))
         self.assertEqual(616, c.from_sensors_precipitation({'temperature': 1.5, 'rainrate': 1}, T))
 
+    def test_snow_sensor(self):
+        # Falling snow measured by a snow sensor, whatever the temperature.
+        self.assertEqual(601, c.from_sensors_precipitation({'temperature': 1.5, 'snowrate': 2}, T))
+        self.assertEqual(601, c.from_sensors_precipitation({'snow': 0.5}, T), 'Without a temperature.')
+        self.assertEqual(616, c.from_sensors_precipitation({'temperature': 1.5, 'snowrate': 2, 'rainrate': 1}, T), 'Rain and snow.')
+        self.assertEqual(601, c.from_sensors_precipitation({'temperature': -3, 'snow': 1, 'rain': 1}, T), 'Below freezing, the gauge is catching snow.')
+        self.assertEqual(201, c.from_sensors_precipitation({'snow': 1}, T, lightning_count=2), 'Thundersnow.')
+        self.assertIsNone(c.from_sensors_precipitation({'temperature': -3, 'snow': 0, 'snowrate': 0, 'snowdepth': 300}, T), 'Snow on the ground isn\'t falling snow.')
+
     def test_fog_and_mist(self):
         fog = {'temperature': 8, 'dewpoint': 7.6, 'humidity': 98, 'windspeed': 1}
         self.assertEqual(741, c.from_sensors_precipitation(fog, T))
