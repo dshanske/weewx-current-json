@@ -72,6 +72,9 @@ OBSERVATIONS = {
     'o3': 'o3',
     'pb': 'pb',
     'so2': 'so2',
+    # Sensirion SGP40/SGP41 gas indices, 1-500, without a unit.
+    'voc': 'voc_index',
+    'nox': 'nox_index',
 }
 
 # Decimal places for each key; anything else is rounded to 2.
@@ -80,6 +83,8 @@ PRECISION = {
     'winddegree': 0,
     'radiation': 0,
     'illuminance': 0,
+    'voc_index': 0,
+    'nox_index': 0,
     'temperature': 1,
     'dewpoint': 1,
     'heatindex': 1,

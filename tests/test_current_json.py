@@ -32,6 +32,9 @@ RECORD = {
     'heatindex': None,
 }
 
+# A record with an SGP41 gas sensor's indices, in WeeWX's custom voc and nox columns, and CO2.
+GAS_RECORD = dict(RECORD, voc=112.4, nox=1.0, co2=421.0)
+
 
 class FakeStation:
     altitude_vt = weewx.units.ValueTuple(40, 'foot', 'group_altitude')
@@ -55,6 +58,15 @@ class TestObservations(unittest.TestCase):
         self.assertEqual(412, observations['radiation'])
         self.assertEqual(3.1, observations['uv'])
         self.assertEqual(8.25, observations['pm2_5'])
+
+    def test_gas_indices(self):
+        observations = sl.observations_from_record(GAS_RECORD)
+        self.assertEqual(112, observations['voc_index'])
+        self.assertEqual(1, observations['nox_index'])
+        self.assertIsInstance(observations['voc_index'], int)
+        self.assertEqual(421.0, observations['co2'])
+        self.assertNotIn('voc', observations, 'Renamed, not copied.')
+        self.assertNotIn('voc_index', sl.observations_from_record(RECORD), 'No gas sensor.')
 
     def test_missing_readings_left_out(self):
         observations = sl.observations_from_record(RECORD)

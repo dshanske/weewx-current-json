@@ -149,9 +149,12 @@ The file uses version 1 of the current conditions format:
   | `windchill` | `windchill` | `UV` | `uv` |
   | `barometer` | `pressure` | `pm1_0`, `pm2_5`, `pm10_0` | the same |
   | `windSpeed` | `windspeed` | `co`, `co2`, `nh3`, `o3`, `pb`, `so2` | the same |
-  | `windDir` | `winddegree` | | |
-  | `windGust` | `windgust` | | |
+  | `windDir` | `winddegree` | `voc` | `voc_index` |
+  | `windGust` | `windgust` | `nox` | `nox_index` |
 
+* `voc_index` and `nox_index` are the VOC and NOx indices of a Sensirion SGP40 or SGP41 gas sensor,
+  from 1 to 500 and without a unit: for VOC, 100 is the sensor's recent average; for NOx, 1 is the
+  baseline. Store the indices in WeeWX's `voc` and `nox`, not a concentration.
 * `code` is an OpenWeatherMap-style condition code (800 clear, 801–804 increasing cloud, 500–504
   rain, 600–602 snow, 701 mist, 741 fog, 200–233 thunderstorm, 400 windy), and `derived.code` names
   the source it came from.
