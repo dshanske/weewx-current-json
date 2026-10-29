@@ -76,6 +76,13 @@ class TestClouds(unittest.TestCase):
         self.assertIsNone(c.from_sensors_clouds(20, 80, T), 'The sun is too low.')
         self.assertIsNone(c.from_sensors_clouds(None, 900, T), 'No radiation sensor.')
 
+    def test_sunlight(self):
+        self.assertEqual(412.0, c.sunlight(412, 50000))
+        self.assertEqual(500.0, c.sunlight(None, 60000), 'Illuminance, in lux, without radiation.')
+        self.assertEqual(0.0, c.sunlight(0))
+        self.assertIsNone(c.sunlight(None, None))
+        self.assertIsNone(c.sunlight(True, 'bright'))
+
     def test_wind(self):
         self.assertEqual(400, c.from_sensors_wind({'windspeed': 12}, T))
         self.assertIsNone(c.from_sensors_wind({'windspeed': 5}, T))
@@ -117,6 +124,22 @@ class TestMetar(unittest.TestCase):
         self.assertEqual(803, c.from_metar_report({'obsTime': observed, 'clouds': [{'cover': 'FEW'}, {'cover': 'BKN'}]}, observed, 90))
         self.assertIsNone(c.from_metar_report(None, observed, 90))
 
+    def test_cloud_cover(self):
+        with open(os.path.join(helpers.DATA, 'metar-kphl-clear.json')) as f:
+            report = json.load(f)[0]
+        observed = report['obsTime']
+        self.assertEqual(0, c.metar_cloud_cover(report, observed + 600, 90))
+        self.assertIsNone(c.metar_cloud_cover(report, observed + 91 * 60, 90), 'Too old.')
+        for cover, percent in {'FEW': 19, 'SCT': 44, 'BKN': 75, 'OVC': 100, 'OVX': 100, 'CAVOK': 0}.items():
+            self.assertEqual(percent, c.metar_cloud_cover({'obsTime': observed, 'cover': cover}, observed, 90), cover)
+        # Weather doesn't change the cover.
+        self.assertEqual(100, c.metar_cloud_cover({'obsTime': observed, 'cover': 'OVC', 'wxString': 'RA'}, observed, 90))
+        # Without an overall cover, the worst layer; a vertical visibility is a hidden sky.
+        self.assertEqual(75, c.metar_cloud_cover({'obsTime': observed, 'clouds': [{'cover': 'FEW'}, {'cover': 'BKN'}]}, observed, 90))
+        self.assertEqual(100, c.metar_cloud_cover({'obsTime': observed, 'clouds': [{'cover': 'VV'}]}, observed, 90))
+        self.assertIsNone(c.metar_cloud_cover({'obsTime': observed, 'cover': 'UNKNOWN'}, observed, 90))
+        self.assertIsNone(c.metar_cloud_cover(None, observed, 90))
+
 
 class TestNws(unittest.TestCase):
 
@@ -127,6 +150,13 @@ class TestNws(unittest.TestCase):
         self.assertEqual(521, c.nws_icon_code('https://api.weather.gov/icons/land/day/rain_showers,30'))
         self.assertIsNone(c.nws_icon_code('https://api.weather.gov/icons/land/night/unknown?size=medium'))
         self.assertIsNone(c.nws_icon_code(''))
+
+    def test_icon_cloud_cover(self):
+        self.assertEqual(44, c.nws_icon_cloud_cover('https://api.weather.gov/icons/land/day/sct?size=small'))
+        self.assertEqual(100, c.nws_icon_cloud_cover('https://api.weather.gov/icons/land/night/ovc,10'))
+        self.assertEqual(75, c.nws_icon_cloud_cover('https://api.weather.gov/icons/land/day/wind_bkn'))
+        self.assertIsNone(c.nws_icon_cloud_cover('https://api.weather.gov/icons/land/day/rain,60'), 'Rain says nothing of the sky.')
+        self.assertIsNone(c.nws_icon_cloud_cover(''))
 
     def test_current_hour(self):
         rows = [
@@ -174,6 +204,53 @@ class TestSources(unittest.TestCase):
 
         self.assertEqual((None, None), c.ConditionSources({'sources': 'nws'}, 'test', nws_manager_opener=broken).condition({}, 100))
         self.assertEqual((None, None), c.ConditionSources({'sources': 'nws'}, 'test').condition({}, 100), 'weewx-nws not installed.')
+
+    def test_condition_from_illuminance(self):
+        sources = c.ConditionSources({'sources': 'sensors_clouds'}, 'test')
+        # 30,000 lux is about 250 W/m^2, under a third of a clear sky: broken cloud.
+        self.assertEqual((803, 'sensors_clouds'), sources.condition({}, 0, max_solar_radiation=900, illuminance=30000))
+
+    def test_cloud_cover_order(self):
+        calls = []
+
+        def fetcher(station, agent):
+            calls.append(station)
+            return {'obsTime': 1000, 'cover': 'OVC'}
+
+        sources = c.ConditionSources({'metar_station': 'KPHL'}, 'test', metar_fetcher=fetcher)
+        self.assertEqual(c.DEFAULT_CLOUD_SOURCES, sources.cloud_sources)
+        # By day, the station's own sunlight comes first, before the airport.
+        self.assertEqual((0, 'sensors_clouds'), sources.cloud_cover(1200, radiation=800, max_solar_radiation=900))
+        self.assertEqual([], calls)
+        # At night, or without a sensor, the airport.
+        self.assertEqual((100, 'metar'), sources.cloud_cover(1200))
+        self.assertEqual((100, 'metar'), sources.cloud_cover(1200, radiation=0, max_solar_radiation=0))
+        # The METAR is fetched once, for the condition and the cloud cover.
+        sources.condition({'temperature': 15}, 1200)
+        self.assertEqual(['KPHL'], calls)
+
+    def test_cloud_cover_from_illuminance(self):
+        sources = c.ConditionSources({}, 'test', metar_fetcher=lambda *a: None)
+        self.assertEqual((19, 'sensors_clouds'), sources.cloud_cover(0, max_solar_radiation=900, illuminance=72000))
+
+    def test_cloud_cover_from_forecast(self):
+        rows = [(60, 0, 3600, 1, 'https://api.weather.gov/icons/land/night/bkn')]
+        opened = []
+
+        def opener():
+            opened.append(1)
+            return FakeManager(rows)
+
+        sources = c.ConditionSources({'sources': 'nws'}, 'test', nws_manager_opener=opener)
+        self.assertEqual((75, 'nws'), sources.cloud_cover(100))
+        self.assertEqual((803, 'nws'), sources.condition({}, 100))
+        self.assertEqual(1, len(opened), 'The forecast is read once.')
+
+    def test_no_cloud_cover(self):
+        sources = c.ConditionSources({'cloud_sources': 'metar, bogus'}, 'test', metar_fetcher=lambda *a: None)
+        self.assertEqual(['metar'], sources.cloud_sources)
+        self.assertEqual((None, None), sources.cloud_cover(0), 'No METAR station is set.')
+        self.assertEqual((None, None), c.ConditionSources({}, 'test').cloud_cover(0), 'Night, no airport, no forecast.')
 
     def test_config(self):
         sources = c.ConditionSources(

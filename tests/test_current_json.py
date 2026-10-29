@@ -145,6 +145,16 @@ class TestDocument(unittest.TestCase):
         self.assertNotIn('derived', document)
         self.assertNotIn('code', document['observations'])
 
+    def test_document_cloudiness(self):
+        document = sl.build_document(RECORD, {'id': 'weewx'}, {'temperature': 21.5}, 803, 'metar', 75, 'metar')
+        self.assertEqual({'temperature': 21.5, 'code': 803, 'cloudiness': 75}, document['observations'])
+        self.assertEqual({'code': 'metar', 'cloudiness': 'metar'}, document['derived'])
+
+        # Cloud cover without a condition, such as at night from the airport while it's windy elsewhere.
+        document = sl.build_document(RECORD, {'id': 'weewx'}, {}, cloudiness=0, cloud_source='metar')
+        self.assertEqual({'cloudiness': 0}, document['observations'])
+        self.assertEqual({'cloudiness': 'metar'}, document['derived'])
+
     def test_write_atomically(self):
         directory = tempfile.mkdtemp()
         try:
@@ -206,6 +216,14 @@ class TestGenerator(unittest.TestCase):
         self.assertEqual(2.54, document['observations']['rain'], 'The last hour of rain, in mm.')
         # Rain in the hour makes it light rain; sensors_precipitation comes first.
         self.assertEqual(500, document['observations']['code'])
+        # 412 W/m^2 of a clear sky's 820 is scattered cloud, measured at the station.
+        self.assertEqual(44, document['observations']['cloudiness'])
+        self.assertEqual({'code': 'sensors_precipitation', 'cloudiness': 'sensors_clouds'}, document['derived'])
+
+    def test_no_cloud_source(self):
+        self.config['CurrentJSON']['Conditions']['cloud_sources'] = 'metar'
+        document = self.run_generator()
+        self.assertNotIn('cloudiness', document['observations'], 'No METAR station is set.')
         self.assertEqual({'code': 'sensors_precipitation'}, document['derived'])
 
     def test_fields_config(self):

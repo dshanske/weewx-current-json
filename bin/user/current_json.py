@@ -16,13 +16,13 @@ weather provider of the Simple Location WordPress plugin:
       "units": "metric",
       "station": {"id": "...", "name": "...", "latitude": ..., "longitude": ..., "altitude": ...},
       "observations": {"temperature": 21.5, "humidity": 60, ...},
-      "derived": {"code": "sensors_clouds"}
+      "derived": {"code": "sensors_clouds", "cloudiness": "sensors_clouds"}
     }
 
 Values are in metric units, WeeWX's METRICWX system: degrees C, hPa
 (mbar), m/s, mm, mm/h, W/m^2, lux, micrograms per cubic meter and ppm. Readings the station doesn't
-have are left out. The condition code, which WeeWX doesn't have, is derived as described in
-user.current_json_conditions, and "derived" says which source gave it.
+have are left out. The condition code and cloud cover, which WeeWX doesn't have, are derived as
+described in user.current_json_conditions, and "derived" says which source gave each.
 """
 
 import json
@@ -181,7 +181,7 @@ def station_from_config(config_dict, stn_info=None):
     return station
 
 
-def build_document(record, station, observations, code=None, source=None):
+def build_document(record, station, observations, code=None, source=None, cloudiness=None, cloud_source=None):
     """Returns the JSON document, as a dict.
 
     Args:
@@ -190,6 +190,8 @@ def build_document(record, station, observations, code=None, source=None):
         observations (dict): Observations, from observations_from_record().
         code (int|None): Derived condition code.
         source (str|None): The source that gave the condition code.
+        cloudiness (int|None): Derived cloud cover, in percent.
+        cloud_source (str|None): The source that gave the cloud cover.
     """
     document = {
         'format': FORMAT,
@@ -199,9 +201,15 @@ def build_document(record, station, observations, code=None, source=None):
         'station': station,
         'observations': dict(observations),
     }
+    derived = {}
     if code is not None:
         document['observations']['code'] = int(code)
-        document['derived'] = {'code': source}
+        derived['code'] = source
+    if cloudiness is not None:
+        document['observations']['cloudiness'] = int(cloudiness)
+        derived['cloudiness'] = cloud_source
+    if derived:
+        document['derived'] = derived
     document['generator'] = 'weewx-current-json %s; WeeWX %s' % (VERSION, weewx.__version__)
     return document
 
@@ -255,9 +263,24 @@ class CurrentJSONGenerator(weewx.reportengine.ReportGenerator):
             radiation=metric.get('radiation'),
             max_solar_radiation=metric.get('maxSolarRad'),
             lightning_count=metric.get('lightning_strike_count'),
+            illuminance=metric.get('illuminance'),
+        )
+        cloudiness, cloud_source = sources.cloud_cover(
+            timestamp,
+            radiation=metric.get('radiation'),
+            max_solar_radiation=metric.get('maxSolarRad'),
+            illuminance=metric.get('illuminance'),
         )
 
-        document = build_document(record, station_from_config(self.config_dict, self.stn_info), observations, code, source)
+        document = build_document(
+            record,
+            station_from_config(self.config_dict, self.stn_info),
+            observations,
+            code,
+            source,
+            cloudiness,
+            cloud_source,
+        )
         path = os.path.join(self.html_root(), sloc_dict.get('filename', 'current.json'))
         write_atomically(path, document)
         log.info("Wrote %s in %.2f seconds", path, time.time() - start)

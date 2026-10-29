@@ -12,14 +12,17 @@ gives a condition wins:
     sensors_precipitation   Lightning, rain and snow from the station's own sensors, and fog from
                             its humidity and dewpoint.
     metar                   The latest METAR of a nearby airport, from aviationweather.gov.
-    sensors_clouds          Daytime cloud cover, from solar radiation compared with WeeWX's
-                            clear-sky maximum (maxSolarRad).
+    sensors_clouds          Daytime cloud cover, from solar radiation (or illuminance) compared
+                            with WeeWX's clear-sky maximum (maxSolarRad).
     sensors_wind            Windy, from the station's wind speed.
     nws                     The current hour of the National Weather Service forecast, as stored
                             by the weewx-nws extension, if it is installed.
 
 Condition codes are OpenWeatherMap-style codes, as the Simple Location WordPress plugin uses them:
 800 clear, 801 few clouds, 802 scattered, 803 broken, 804 overcast, 500/503/504 rain, and so on.
+
+Cloud cover, in percent, comes from sensors_clouds, metar and nws, in their own configurable order
+(cloud_sources), with measured sunlight first because it is at the station.
 
 Every function here works on plain values in the file's metric units (degrees C, m/s,
 mm, mm/h, W/m^2), so the rules can be tested without WeeWX running.
@@ -35,6 +38,18 @@ log = logging.getLogger(__name__)
 
 # Sources, in the default order: measured or observed before forecast.
 DEFAULT_SOURCES = ['sensors_precipitation', 'metar', 'sensors_clouds', 'sensors_wind', 'nws']
+
+# Sources of cloud cover, in the default order: the station's own sunlight first, then the airport,
+# then the forecast.
+DEFAULT_CLOUD_SOURCES = ['sensors_clouds', 'metar', 'nws']
+
+# Cloud cover, in percent, of each sky condition: the middle of its range in eighths of the sky
+# (oktas). FEW is 1-2 oktas, SCT 3-4, BKN 5-7. These match Simple Location's NWS cloud layers.
+CLOUD_PERCENT = {800: 0, 801: 19, 802: 44, 803: 75, 804: 100}
+
+# Lux of daylight per W/m^2 of solar radiation, roughly, to use an illuminance sensor without a
+# radiation sensor. Simple Location uses the same factor.
+LUX_PER_WATT = 120.0
 
 # Thresholds, overridable in [CurrentJSON] [[Conditions]] [[[Thresholds]]].
 DEFAULT_THRESHOLDS = {
@@ -126,18 +141,34 @@ def thresholds_from_config(conditions_dict):
     return thresholds
 
 
-def sources_from_config(conditions_dict):
-    """Returns the sources to try, in order, skipping any that aren't known."""
-    sources = (conditions_dict or {}).get('sources', DEFAULT_SOURCES)
+def sources_from_config(conditions_dict, key='sources', defaults=None):
+    """Returns the sources to try, in order, skipping any that aren't known.
+
+    Args:
+        conditions_dict (dict): The [[Conditions]] section.
+        key (str): The setting: 'sources' for the condition, 'cloud_sources' for cloud cover.
+        defaults (list|None): The default and known sources. Default DEFAULT_SOURCES.
+    """
+    defaults = DEFAULT_SOURCES if defaults is None else defaults
+    sources = (conditions_dict or {}).get(key, defaults)
     if isinstance(sources, str):
         sources = [s.strip() for s in sources.split(',')]
     known = []
     for source in sources:
-        if source in DEFAULT_SOURCES:
+        if source in defaults:
             known.append(source)
         elif source:
-            log.error("Ignoring unknown conditions source %r", source)
+            log.error("Ignoring unknown %s source %r", 'cloud cover' if key == 'cloud_sources' else 'conditions', source)
     return known
+
+
+def sunlight(radiation, illuminance=None):
+    """Returns the solar radiation, W/m^2, or an estimate of it from the illuminance in lux, or None."""
+    if isinstance(radiation, (int, float)) and not isinstance(radiation, bool):
+        return float(radiation)
+    if isinstance(illuminance, (int, float)) and not isinstance(illuminance, bool):
+        return float(illuminance) / LUX_PER_WATT
+    return None
 
 
 def _number(observations, key):
@@ -195,7 +226,8 @@ def from_sensors_clouds(radiation, max_solar_radiation, thresholds):
     """Daytime cloud cover from solar radiation compared with the clear-sky maximum.
 
     Args:
-        radiation (float|None): Measured solar radiation, W/m^2, averaged over the archive interval.
+        radiation (float|None): Measured solar radiation, W/m^2, averaged over the archive interval,
+            or an estimate of it from the illuminance; see sunlight().
         max_solar_radiation (float|None): WeeWX's theoretical clear-sky radiation (maxSolarRad).
         thresholds (dict): Thresholds, as in DEFAULT_THRESHOLDS.
 
@@ -304,6 +336,33 @@ def from_metar_report(report, now, max_age_minutes):
     return worst
 
 
+def metar_cloud_cover(report, now, max_age_minutes):
+    """Returns the cloud cover, in percent, of a METAR report from aviationweather.gov, or None.
+
+    Uses the report's overall cover, or without one its worst cloud layer. A sky hidden by fog or
+    other obscuration (OVX, VV) counts as overcast.
+
+    Args:
+        report (dict): One report, with obsTime (Unix seconds), cover and clouds.
+        now (float): Current time, Unix seconds.
+        max_age_minutes (float): Oldest report to use.
+    """
+    if not isinstance(report, dict):
+        return None
+    observed = report.get('obsTime')
+    if not isinstance(observed, (int, float)) or now - observed > max_age_minutes * 60:
+        return None
+    cover = report.get('cover')
+    code = METAR_COVER.get(cover.upper()) if isinstance(cover, str) else None
+    if code is None:
+        for layer in report.get('clouds') or []:
+            amount = str(layer.get('cover', '')).upper() if isinstance(layer, dict) else ''
+            layer_code = 804 if amount == 'VV' else METAR_COVER.get(amount)
+            if layer_code is not None and (code is None or layer_code > code):
+                code = layer_code
+    return CLOUD_PERCENT.get(code)
+
+
 def fetch_metar(station, user_agent, timeout=10):
     """Fetches the latest METAR of an airport from aviationweather.gov.
 
@@ -339,6 +398,25 @@ def nws_icon_code(icon_url):
     return NWS_ICONS.get(first.split(',')[0])
 
 
+def nws_icon_cloud_cover(icon_url):
+    """Returns the cloud cover, in percent, of an NWS forecast icon URL, or None.
+
+    Only sky icons (skc, few, sct, bkn, ovc, and their windy versions) give a cover; rain, snow and
+    the others don't say how cloudy it is.
+    """
+    if not isinstance(icon_url, str) or '/icons/' not in icon_url:
+        return None
+    parts = urllib.parse.urlparse(icon_url).path.split('/')
+    try:
+        first = parts[parts.index('icons') + 3]
+    except (ValueError, IndexError):
+        return None
+    name = first.split(',')[0]
+    if name.startswith('wind_'):
+        name = name[len('wind_'):]
+    return CLOUD_PERCENT.get(NWS_ICONS.get(name))
+
+
 def nws_current_icon(db_manager, now):
     """Returns the icon URL of weewx-nws's one-hour forecast for the current hour, or None.
 
@@ -370,38 +448,67 @@ class ConditionSources:
         """
         conditions_dict = conditions_dict or {}
         self.sources = sources_from_config(conditions_dict)
+        self.cloud_sources = sources_from_config(conditions_dict, 'cloud_sources', DEFAULT_CLOUD_SOURCES)
         self.thresholds = thresholds_from_config(conditions_dict)
         self.metar_station = str(conditions_dict.get('metar_station', '')).strip().upper()
         self.metar_max_age = float(conditions_dict.get('metar_max_age', 90))
         self.user_agent = user_agent
         self.metar_fetcher = metar_fetcher
         self.nws_manager_opener = nws_manager_opener
+        # The METAR report and forecast icon, fetched at most once, for the condition and cloud cover.
+        self._metar = None
+        self._metar_fetched = False
+        self._nws_icon = None
+        self._nws_read = False
 
-    def condition(self, observations, now, radiation=None, max_solar_radiation=None, lightning_count=None):
+    def condition(self, observations, now, radiation=None, max_solar_radiation=None, lightning_count=None, illuminance=None):
         """Returns (code, source), or (None, None) if no source gives a condition."""
         for source in self.sources:
             code = None
             if source == 'sensors_precipitation':
                 code = from_sensors_precipitation(observations, self.thresholds, lightning_count)
             elif source == 'metar' and self.metar_station:
-                code = from_metar_report(self.metar_fetcher(self.metar_station, self.user_agent), now, self.metar_max_age)
+                code = from_metar_report(self._metar_report(), now, self.metar_max_age)
             elif source == 'sensors_clouds':
-                code = from_sensors_clouds(radiation, max_solar_radiation, self.thresholds)
+                code = from_sensors_clouds(sunlight(radiation, illuminance), max_solar_radiation, self.thresholds)
             elif source == 'sensors_wind':
                 code = from_sensors_wind(observations, self.thresholds)
             elif source == 'nws' and self.nws_manager_opener is not None:
-                code = self._nws(now)
+                code = nws_icon_code(self._nws(now))
             if code is not None:
                 return code, source
         return None, None
 
+    def cloud_cover(self, now, radiation=None, max_solar_radiation=None, illuminance=None):
+        """Returns (percent, source), or (None, None) if no source gives a cloud cover."""
+        for source in self.cloud_sources:
+            percent = None
+            if source == 'sensors_clouds':
+                percent = CLOUD_PERCENT.get(from_sensors_clouds(sunlight(radiation, illuminance), max_solar_radiation, self.thresholds))
+            elif source == 'metar' and self.metar_station:
+                percent = metar_cloud_cover(self._metar_report(), now, self.metar_max_age)
+            elif source == 'nws' and self.nws_manager_opener is not None:
+                percent = nws_icon_cloud_cover(self._nws(now))
+            if percent is not None:
+                return percent, source
+        return None, None
+
+    def _metar_report(self):
+        if not self._metar_fetched:
+            self._metar = self.metar_fetcher(self.metar_station, self.user_agent)
+            self._metar_fetched = True
+        return self._metar
+
     def _nws(self, now):
-        try:
-            with self.nws_manager_opener() as manager:
-                return nws_icon_code(nws_current_icon(manager, now))
-        except Exception as e:  # noqa: BLE001 - weewx-nws not installed or its database unavailable
-            log.debug("weewx-nws forecast unavailable: %s", e)
-            return None
+        """Returns the forecast icon URL for now, read at most once, or None."""
+        if not self._nws_read:
+            self._nws_read = True
+            try:
+                with self.nws_manager_opener() as manager:
+                    self._nws_icon = nws_current_icon(manager, now)
+            except Exception as e:  # noqa: BLE001 - weewx-nws not installed or its database unavailable
+                log.debug("weewx-nws forecast unavailable: %s", e)
+        return self._nws_icon
 
 
 def now():
