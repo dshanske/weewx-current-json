@@ -171,13 +171,47 @@ The file uses version 1 of the current conditions format:
   | `windchill` | `windchill` | `UV` | `uv` |
   | `barometer` | `pressure` | `pm1_0`, `pm2_5`, `pm10_0` | the same |
   | `windSpeed` | `windspeed` | `co`, `co2`, `nh3`, `o3`, `pb`, `so2` | the same |
-  | `windDir` | `winddegree` | | |
-  | `windGust` | `windgust` | | |
+  | `windDir` | `winddegree` | `voc_index` | `voc_index` |
+  | `windGust` | `windgust` | `nox_index` | `nox_index` |
 
+  To read a key from a field with another name, see [Fields](#fields).
 * `cloudiness` is the cloud cover in percent, and `derived.cloudiness` names the source it came from.
+* `voc_index` and `nox_index` are the VOC and NOx indices of a Sensirion SGP40 or SGP41 gas sensor,
+  from 1 to 500 and without a unit: for VOC, 100 is the sensor's recent average; for NOx, 1 is the
+  baseline. WeeWX has no standard fields for them, so add `voc_index` and `nox_index` columns, and
+  store the indices there, not a concentration.
 * `code` is an OpenWeatherMap-style condition code (800 clear, 801–804 increasing cloud, 500–504
   rain, 600–602 snow, 701 mist, 741 fog, 200–233 thunderstorm, 400 windy), and `derived.code` names
   the source it came from.
+
+## Fields
+
+Each key of the file is read from the WeeWX field in the table above. If your station stores a
+reading under another name, map it in `[[Fields]]`, as `key = WeeWX field`:
+
+```
+[CurrentJSON]
+    [[Fields]]
+        voc_index = voc        # Read voc_index from the voc field.
+        nox_index = nox
+        uv = none              # Leave uv out of the file.
+```
+
+Only the file's own keys can be mapped. The field must be in the archive record, but it doesn't
+have to be stored in the database. A field that WeeWX doesn't know the unit of is written as it is,
+so it must already be in the file's units.
+
+To rename columns instead, so the defaults apply, stop WeeWX, back up the database, and run, for
+example:
+
+```
+weectl database rename-column voc voc_index
+weectl database rename-column nox nox_index
+```
+
+Then change whatever writes those fields, such as an MQTT Subscribe mapping, to the new names, and
+start WeeWX again. If you added the columns through a custom schema rather than `weectl database
+add-column`, rename them in the schema too.
 
 ## Development
 
