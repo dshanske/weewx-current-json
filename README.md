@@ -48,12 +48,18 @@ Everything has a default; the installer writes the options into `weewx.conf` com
     user_agent = ""                    # Sent to aviationweather.gov; please include a contact.
 
     [[Conditions]]
-        sources = sensors_precipitation, metar, sensors_clouds, sensors_wind, nws
+        sources = sensors_precipitation, sensors_air, metar, sensors_clouds, sensors_wind, nws
         cloud_sources = sensors_clouds, metar, nws
         metar_station = ""             # ICAO ID of a nearby airport, such as KPHL.
         metar_max_age = 90             # Minutes.
         [[[Thresholds]]]
             ...                        # See below.
+
+    [[AirQuality]]
+        aqi_scale = us_epa             # Or none. See Air quality.
+
+    [[Fields]]
+        ...                            # See Fields.
 ```
 
 The extension also adds a `CurrentJSON` report to `[StdReport]`, which you can disable there.
@@ -61,12 +67,13 @@ The extension also adds a `CurrentJSON` report to `[StdReport]`, which you can d
 ## Conditions
 
 WeeWX measures the weather but doesn't describe it, so the extension derives a condition from up
-to five sources. They're tried in the order of `sources`; the first that gives a condition is
+to six sources. They're tried in the order of `sources`; the first that gives a condition is
 used, and the file says which one did. Remove a source from the list to skip it.
 
 | Source | From | Gives |
 |---|---|---|
 | `sensors_precipitation` | Your lightning sensor, rain gauge, temperature, humidity and dewpoint | Thunderstorm when lightning was detected this interval; snow at or below 0 °C, rain and snow below 2 °C, otherwise light, moderate or heavy rain by rain rate; fog or mist when the air is calm and saturated |
+| `sensors_air` | Your PM2.5 sensor, and a gas sensor's VOC index if you have one | Smoke when PM2.5 and the VOC index are both raised; haze when PM2.5 is raised in dry air without the VOCs. Before the sunlight, so a smoky sky isn't reported as just cloudy. |
 | `metar` | The latest METAR of the airport in `metar_station`, from [aviationweather.gov](https://aviationweather.gov) | The reported weather (rain, snow, thunderstorm, fog…) or sky cover. Used only if no more than `metar_max_age` minutes old. Fetched at most once each time the file is written, and only when a source before it, for the condition or the cloud cover, gave nothing. |
 | `sensors_clouds` | Your solar radiation sensor, compared with WeeWX's clear-sky maximum (`maxSolarRad`); without one, your illuminance (lux) sensor, at about 120 lux per W/m² | Clear, few, scattered, broken or overcast, in daytime only |
 | `sensors_wind` | Your anemometer | Windy |
@@ -114,9 +121,44 @@ In metric units, under `[[[Thresholds]]]`:
 | `cloud_few` | 0.55 | … few clouds |
 | `cloud_scattered` | 0.35 | … scattered clouds |
 | `cloud_broken` | 0.15 | … broken clouds; below this, overcast |
+| `smoke_pm2_5` | 35.5 | PM2.5, µg/m³, from which raised VOCs mean smoke (the US EPA's Unhealthy for Sensitive Groups) |
+| `smoke_voc` | 150 | VOC index from which, with that PM2.5, it is smoke |
+| `haze_pm2_5` | 35.5 | PM2.5, µg/m³, from which dry air without raised VOCs is haze |
 
 Tipping-bucket rain gauges badly undercount snow, and a dirty or shaded radiation sensor reads as
 cloud, so adjust these to your station.
+
+A gas sensor's VOC index adapts to its recent baseline (12 hours in the AirGradient packages), so
+smoke that lasts for days can stop counting as raised VOCs. A longer learning time on the sensor
+helps.
+
+## Air quality
+
+The air quality index is calculated from your station's PM2.5, and written to the file with its
+category and color. It isn't stored in WeeWX. The PM2.5 should already be corrected for the sensor:
+the AirGradient ESPHome packages, for example, apply the EPA's correction for Plantower sensors
+before sending it.
+
+`aqi_scale` chooses the index:
+
+* `us_epa` (the default): the US EPA's AQI for PM2.5, as the hourly NowCast that AirNow shows. It's
+  calculated from the last 12 hourly means of the archive's `pm2_5`, weighted towards the most
+  recent, with the breakpoints that took effect on 2024-05-06:
+
+  | Category | AQI | PM2.5, µg/m³ | Color |
+  |---|---|---|---|
+  | Good | 0–50 | 0.0–9.0 | `#00e400` |
+  | Moderate | 51–100 | 9.1–35.4 | `#ffff00` |
+  | Unhealthy for Sensitive Groups | 101–150 | 35.5–55.4 | `#ff7e00` |
+  | Unhealthy | 151–200 | 55.5–125.4 | `#ff0000` |
+  | Very Unhealthy | 201–300 | 125.5–225.4 | `#8f3f97` |
+  | Hazardous | 301–500, and above | 225.5–325.4, and above | `#7e0023` |
+
+* `none`: no index.
+
+If there isn't enough PM2.5, the file has no index, rather than a stale one. That happens when the
+current record has no PM2.5, such as during a sensor outage, or when fewer than 2 of the last 3
+hours have any.
 
 ## The file
 
@@ -150,9 +192,13 @@ The file uses version 1 of the current conditions format:
     "radiation": 412,
     "uv": 3.1,
     "code": 802,
-    "cloudiness": 44
+    "cloudiness": 44,
+    "pm2_5": 8.2,
+    "aqi": 46,
+    "aqi_category": "Good",
+    "aqi_color": "#00e400"
   },
-  "derived": { "code": "sensors_clouds", "cloudiness": "sensors_clouds" },
+  "derived": { "code": "sensors_clouds", "cloudiness": "sensors_clouds", "aqi": "us_epa" },
   "generator": "weewx-current-json 0.1.0; WeeWX 5.5.2"
 }
 ```
@@ -176,6 +222,8 @@ The file uses version 1 of the current conditions format:
 
   To read a key from a field with another name, see [Fields](#fields).
 * `cloudiness` is the cloud cover in percent, and `derived.cloudiness` names the source it came from.
+* `aqi` is the air quality index, `aqi_category` its category's name in English, and `aqi_color`
+  the category's color as `#rrggbb`; `derived.aqi` names the scale. See [Air quality](#air-quality).
 * `voc_index` and `nox_index` are the VOC and NOx indices of a Sensirion SGP40 or SGP41 gas sensor,
   from 1 to 500 and without a unit: for VOC, 100 is the sensor's recent average; for NOx, 1 is the
   baseline. WeeWX has no standard fields for them, so add `voc_index` and `nox_index` columns, and

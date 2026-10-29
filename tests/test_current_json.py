@@ -226,6 +226,43 @@ class TestGenerator(unittest.TestCase):
         self.assertNotIn('cloudiness', document['observations'], 'No METAR station is set.')
         self.assertEqual({'code': 'sensors_precipitation'}, document['derived'])
 
+    def add_hours(self, hours, **values):
+        """Adds five-minute records for hours before the hour the setUp records cover."""
+        with weewx.manager.open_manager_with_config(self.config, 'wx_binding') as manager:
+            for hour in range(1, hours + 1):
+                for i in range(12):
+                    stamp = RECORD['dateTime'] - hour * 3600 - (11 - i) * 300
+                    manager.addRecord(dict(RECORD, dateTime=stamp, rain=0.0, rainRate=0.0, **values))
+
+    def test_aqi(self):
+        # Three hours of 8.25 µg/m³ PM2.5: a NowCast of 8.2, AQI 46, Good.
+        self.add_hours(2)
+        document = self.run_generator()
+        self.assertEqual(46, document['observations']['aqi'])
+        self.assertEqual('Good', document['observations']['aqi_category'])
+        self.assertEqual('#00e400', document['observations']['aqi_color'])
+        self.assertEqual('us_epa', document['derived']['aqi'])
+
+    def test_no_aqi_without_history(self):
+        # setUp's records cover only the last hour: fewer than 2 of the last 3 hours.
+        document = self.run_generator()
+        for key in ('aqi', 'aqi_category', 'aqi_color'):
+            self.assertNotIn(key, document['observations'], key)
+        self.assertNotIn('aqi', document.get('derived', {}))
+
+    def test_no_aqi_during_outage(self):
+        # History, but the sensor isn't reporting now.
+        self.add_hours(2)
+        record = dict(RECORD, rainRate=0.0, pm2_5=None)
+        document = self.run_generator(record)
+        self.assertNotIn('aqi', document['observations'])
+        self.assertNotIn('pm2_5', document['observations'])
+
+    def test_aqi_off(self):
+        self.add_hours(2)
+        self.config['CurrentJSON']['AirQuality'] = {'aqi_scale': 'none'}
+        self.assertNotIn('aqi', self.run_generator()['observations'])
+
     def test_fields_config(self):
         self.config['CurrentJSON']['Fields'] = {'uv': 'none', 'voc_index': 'voc'}
         record = dict(RECORD, rainRate=0.0, voc=140.0)

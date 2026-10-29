@@ -6,11 +6,12 @@
 """Derive a weather condition code for the current conditions file.
 
 WeeWX measures the weather but has no notion of "conditions", such as "rain" or "partly cloudy".
-This module derives one from up to four sources, tried in a configurable order; the first that
+This module derives one from up to six sources, tried in a configurable order; the first that
 gives a condition wins:
 
     sensors_precipitation   Lightning, rain and snow from the station's own sensors, and fog from
                             its humidity and dewpoint.
+    sensors_air             Smoke or haze, from the station's PM2.5 and VOC index.
     metar                   The latest METAR of a nearby airport, from aviationweather.gov.
     sensors_clouds          Daytime cloud cover, from solar radiation (or illuminance) compared
                             with WeeWX's clear-sky maximum (maxSolarRad).
@@ -37,7 +38,7 @@ import urllib.request
 log = logging.getLogger(__name__)
 
 # Sources, in the default order: measured or observed before forecast.
-DEFAULT_SOURCES = ['sensors_precipitation', 'metar', 'sensors_clouds', 'sensors_wind', 'nws']
+DEFAULT_SOURCES = ['sensors_precipitation', 'sensors_air', 'metar', 'sensors_clouds', 'sensors_wind', 'nws']
 
 # Sources of cloud cover, in the default order: the station's own sunlight first, then the airport,
 # then the forecast.
@@ -75,6 +76,12 @@ DEFAULT_THRESHOLDS = {
     'cloud_few': 0.55,
     'cloud_scattered': 0.35,
     'cloud_broken': 0.15,
+    # Smoke: PM2.5, micrograms per cubic meter, at least (the US EPA's Unhealthy for Sensitive
+    # Groups), with the VOC index at least smoke_voc. Haze: PM2.5 at least haze_pm2_5 in air drier
+    # than mist_humidity, without the raised VOC index.
+    'smoke_pm2_5': 35.5,
+    'smoke_voc': 150.0,
+    'haze_pm2_5': 35.5,
 }
 
 # METAR sky cover, worst first, and its condition code.
@@ -219,6 +226,32 @@ def from_sensors_precipitation(observations, thresholds, lightning_count=None):
             return 741
         if calm and close and humidity >= thresholds['mist_humidity']:
             return 701
+    return None
+
+
+def from_sensors_air(observations, thresholds):
+    """Smoke or haze, from the station's PM2.5 and the VOC index of a gas sensor.
+
+    Smoke raises both fine particles and VOCs; haze is fine particles in dry air without the VOCs.
+    Without a VOC sensor, high PM2.5 in dry air is haze.
+
+    Args:
+        observations (dict): Observations in the file's units, keyed by its names.
+        thresholds (dict): Thresholds, as in DEFAULT_THRESHOLDS.
+
+    Returns:
+        int|None: 711 smoke, 721 haze, or None.
+    """
+    pm2_5 = _number(observations, 'pm2_5')
+    if pm2_5 is None:
+        return None
+    voc = _number(observations, 'voc_index')
+    if voc is not None and voc >= thresholds['smoke_voc'] and pm2_5 >= thresholds['smoke_pm2_5']:
+        return 711
+    humidity = _number(observations, 'humidity')
+    dry = humidity is None or humidity < thresholds['mist_humidity']
+    if pm2_5 >= thresholds['haze_pm2_5'] and dry and (voc is None or voc < thresholds['smoke_voc']):
+        return 721
     return None
 
 
@@ -467,6 +500,8 @@ class ConditionSources:
             code = None
             if source == 'sensors_precipitation':
                 code = from_sensors_precipitation(observations, self.thresholds, lightning_count)
+            elif source == 'sensors_air':
+                code = from_sensors_air(observations, self.thresholds)
             elif source == 'metar' and self.metar_station:
                 code = from_metar_report(self._metar_report(), now, self.metar_max_age)
             elif source == 'sensors_clouds':

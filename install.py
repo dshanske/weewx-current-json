@@ -48,11 +48,15 @@ CONFIG = """
         # derived from these sources, tried in order; the first that gives one is used.
         # Remove a source to skip it.
         #   sensors_precipitation  lightning, rain, snow and fog from this station's sensors
+        #   sensors_air            smoke or haze, from PM2.5 and a gas sensor's VOC index
         #   metar                  a nearby airport's METAR (set metar_station)
-        #   sensors_clouds         daytime cloud cover, from solar radiation
+        #   sensors_clouds         daytime cloud cover, from solar radiation or illuminance
         #   sensors_wind           windy, from wind speed
         #   nws                    the NWS hourly forecast, if weewx-nws is installed
-        #sources = sensors_precipitation, metar, sensors_clouds, sensors_wind, nws
+        #sources = sensors_precipitation, sensors_air, metar, sensors_clouds, sensors_wind, nws
+
+        # Sources of the cloud cover, in percent, tried in order: sensors_clouds, metar, nws.
+        #cloud_sources = sensors_clouds, metar, nws
 
         # ICAO ID of a nearby airport, such as KPHL, for the metar source. Empty skips it.
         #metar_station = ""
@@ -65,6 +69,19 @@ CONFIG = """
             #rain_moderate = 2.5
             #rain_heavy = 7.6
             #cloud_clear = 0.75
+            #smoke_pm2_5 = 35.5
+            #smoke_voc = 150
+
+    [[AirQuality]]
+        # Air quality index, calculated from this station's PM2.5, which should already be
+        # corrected for the sensor. Only written to the file. us_epa (the hourly NowCast, 2024
+        # breakpoints) or none.
+        #aqi_scale = us_epa
+
+    [[Fields]]
+        # Read a key of the file from a WeeWX field with another name, or leave it out with none.
+        #voc_index = voc
+        #uv = none
 
 [StdReport]
     [[CurrentJSON]]
@@ -87,7 +104,7 @@ class CurrentJSONInstaller(ExtensionInstaller):
             author_email='david@shanske.com',
             config=configobj.ConfigObj(StringIO(CONFIG)),
             files=[
-                ('bin/user', ['bin/user/current_json.py', 'bin/user/current_json_conditions.py']),
+                ('bin/user', ['bin/user/current_json.py', 'bin/user/current_json_air.py', 'bin/user/current_json_conditions.py']),
                 ('skins/CurrentJSON', ['skins/CurrentJSON/skin.conf']),
             ],
         )
