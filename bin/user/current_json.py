@@ -16,13 +16,15 @@ weather provider of the Simple Location WordPress plugin:
       "units": "metric",
       "station": {"id": "...", "name": "...", "latitude": ..., "longitude": ..., "altitude": ...},
       "observations": {"temperature": 21.5, "humidity": 60, ...},
-      "derived": {"code": "sensors_clouds", "cloudiness": "sensors_clouds"}
+      "derived": {"code": "sensors_clouds", "cloudiness": "sensors_clouds", "aqi": "us_epa"}
     }
 
 Values are in metric units, WeeWX's METRICWX system: degrees C, hPa
 (mbar), m/s, mm, mm/h, W/m^2, lux, micrograms per cubic meter and ppm. Readings the station doesn't
 have are left out. The condition code and cloud cover, which WeeWX doesn't have, are derived as
-described in user.current_json_conditions, and "derived" says which source gave each.
+described in user.current_json_conditions, and "derived" says which source gave each. The air
+quality index, with its category and color, is calculated as described in user.current_json_air,
+and "derived" names its scale.
 """
 
 import json
@@ -38,6 +40,7 @@ import weewx.units
 import weewx.xtypes
 from weeutil.weeutil import TimeSpan, to_bool
 
+import user.current_json_air as air
 import user.current_json_conditions as conditions
 
 log = logging.getLogger(__name__)
@@ -181,7 +184,8 @@ def station_from_config(config_dict, stn_info=None):
     return station
 
 
-def build_document(record, station, observations, code=None, source=None, cloudiness=None, cloud_source=None):
+def build_document(record, station, observations, code=None, source=None, cloudiness=None, cloud_source=None,
+                   air_quality=None, aqi_scale=None):
     """Returns the JSON document, as a dict.
 
     Args:
@@ -192,6 +196,9 @@ def build_document(record, station, observations, code=None, source=None, cloudi
         source (str|None): The source that gave the condition code.
         cloudiness (int|None): Derived cloud cover, in percent.
         cloud_source (str|None): The source that gave the cloud cover.
+        air_quality (dict|None): 'aqi', 'aqi_category' and 'aqi_color', from
+            user.current_json_air.air_quality(), or empty without an index.
+        aqi_scale (str|None): The scale of the index.
     """
     document = {
         'format': FORMAT,
@@ -208,6 +215,9 @@ def build_document(record, station, observations, code=None, source=None, cloudi
     if cloudiness is not None:
         document['observations']['cloudiness'] = int(cloudiness)
         derived['cloudiness'] = cloud_source
+    if air_quality and air_quality.get('aqi') is not None:
+        document['observations'].update(air_quality)
+        derived['aqi'] = aqi_scale
     if derived:
         document['derived'] = derived
     document['generator'] = 'weewx-current-json %s; WeeWX %s' % (VERSION, weewx.__version__)
@@ -248,7 +258,8 @@ class CurrentJSONGenerator(weewx.reportengine.ReportGenerator):
             return
 
         timestamp = record['dateTime']
-        observations = observations_from_record(record, self.hour_rain(manager, timestamp), fields_from_config(sloc_dict))
+        fields = fields_from_config(sloc_dict)
+        observations = observations_from_record(record, self.hour_rain(manager, timestamp), fields)
 
         user_agent = sloc_dict.get('user_agent') or ('weewx-current-json/%s' % VERSION)
         sources = conditions.ConditionSources(
@@ -272,6 +283,12 @@ class CurrentJSONGenerator(weewx.reportengine.ReportGenerator):
             illuminance=metric.get('illuminance'),
         )
 
+        aqi_scale = air.scale_from_config(sloc_dict.get('AirQuality', {}))
+        air_quality = {}
+        if aqi_scale:
+            pm2_5_field = next((name for name, key in fields.items() if key == 'pm2_5'), None)
+            air_quality = air.air_quality(aqi_scale, observations.get('pm2_5'), self.hourly_means(manager, pm2_5_field, timestamp))
+
         document = build_document(
             record,
             station_from_config(self.config_dict, self.stn_info),
@@ -280,6 +297,8 @@ class CurrentJSONGenerator(weewx.reportengine.ReportGenerator):
             source,
             cloudiness,
             cloud_source,
+            air_quality,
+            aqi_scale,
         )
         path = os.path.join(self.html_root(), sloc_dict.get('filename', 'current.json'))
         write_atomically(path, document)
@@ -300,6 +319,37 @@ class CurrentJSONGenerator(weewx.reportengine.ReportGenerator):
         if total is None or total.value is None:
             return None
         return weewx.units.convert(total, 'mm').value
+
+    @staticmethod
+    def hourly_means(manager, field, timestamp, hours=air.NOWCAST_HOURS):
+        """Returns the hourly means of a PM field, in micrograms per cubic meter, for the NowCast.
+
+        Args:
+            manager: The archive's database manager.
+            field (str|None): The WeeWX field, such as pm2_5.
+            timestamp (int): The end of the most recent hour.
+            hours (int): How many hours.
+
+        Returns:
+            list: Means, the most recent first, with None for an hour without data; empty if the
+            field isn't in the archive.
+        """
+        if not field:
+            return []
+        means = []
+        for age in range(hours):
+            span = TimeSpan(timestamp - (age + 1) * 3600, timestamp - age * 3600)
+            try:
+                mean = weewx.xtypes.get_aggregate(field, span, 'avg', manager)
+            except (weewx.UnknownType, weewx.UnknownAggregation):
+                return []
+            if mean is None or mean.value is None:
+                means.append(None)
+                continue
+            if mean.unit is not None:
+                mean = weewx.units.convert(mean, 'microgram_per_meter_cubed')
+            means.append(float(mean.value))
+        return means
 
     def nws_manager_opener(self):
         """Returns a function opening weewx-nws's database, or None if weewx-nws isn't configured."""

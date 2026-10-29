@@ -13,3 +13,9 @@
   `voc_index` and `nox_index` (#3).
 * Adds `[[Fields]]`, to read any of the file's keys from a WeeWX field with another name, or to
   leave a key out.
+* Adds the air quality index, `aqi`, with `aqi_category` and `aqi_color`: the US EPA's hourly
+  NowCast for PM2.5 with the 2024 breakpoints, or none, set by `aqi_scale` in `[[AirQuality]]`. No
+  index without enough PM2.5, such as during a sensor outage (#5).
+* Adds the `sensors_air` conditions source: smoke from raised PM2.5 and VOC index, haze from raised
+  PM2.5 in dry air (#5).
+* The installer's settings include `cloud_sources`, `[[AirQuality]]` and `[[Fields]]`.
