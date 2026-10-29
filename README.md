@@ -1,7 +1,7 @@
 # weewx-current-json
 
 A [WeeWX](https://weewx.com) 5 extension that publishes your station's current conditions as JSON,
-with a weather condition, such as "light rain" or "partly cloudy", derived from your sensors and
+with a weather condition, such as "light rain" or "partly cloudy", and the cloud cover, derived from your sensors and
 other sources.
 
 Each archive interval it writes `current.json` next to your WeeWX web pages: the latest readings in
@@ -49,6 +49,7 @@ Everything has a default; the installer writes the options into `weewx.conf` com
 
     [[Conditions]]
         sources = sensors_precipitation, metar, sensors_clouds, sensors_wind, nws
+        cloud_sources = sensors_clouds, metar, nws
         metar_station = ""             # ICAO ID of a nearby airport, such as KPHL.
         metar_max_age = 90             # Minutes.
         [[[Thresholds]]]
@@ -66,12 +67,32 @@ used, and the file says which one did. Remove a source from the list to skip it.
 | Source | From | Gives |
 |---|---|---|
 | `sensors_precipitation` | Your lightning sensor, rain gauge, temperature, humidity and dewpoint | Thunderstorm when lightning was detected this interval; snow at or below 0 °C, rain and snow below 2 °C, otherwise light, moderate or heavy rain by rain rate; fog or mist when the air is calm and saturated |
-| `metar` | The latest METAR of the airport in `metar_station`, from [aviationweather.gov](https://aviationweather.gov) | The reported weather (rain, snow, thunderstorm, fog…) or sky cover. Used only if no more than `metar_max_age` minutes old. Fetched only when the sources before it gave nothing. |
-| `sensors_clouds` | Your solar radiation sensor, compared with WeeWX's clear-sky maximum (`maxSolarRad`) | Clear, few, scattered, broken or overcast, in daytime only |
+| `metar` | The latest METAR of the airport in `metar_station`, from [aviationweather.gov](https://aviationweather.gov) | The reported weather (rain, snow, thunderstorm, fog…) or sky cover. Used only if no more than `metar_max_age` minutes old. Fetched at most once each time the file is written, and only when a source before it, for the condition or the cloud cover, gave nothing. |
+| `sensors_clouds` | Your solar radiation sensor, compared with WeeWX's clear-sky maximum (`maxSolarRad`); without one, your illuminance (lux) sensor, at about 120 lux per W/m² | Clear, few, scattered, broken or overcast, in daytime only |
 | `sensors_wind` | Your anemometer | Windy |
 | `nws` | The current hour of the National Weather Service hourly forecast, if [weewx-nws](https://github.com/chaunceygardiner/weewx-nws) is installed | The forecast condition. A forecast, not an observation, so it is last; it's most useful at night, when cloud cover can't be measured. |
 
 If no source gives a condition, the file has none, rather than a guess.
+
+### Cloud cover
+
+The cloud cover, in percent, comes from three of the same sources, in the order of `cloud_sources`.
+By default your own sunlight comes first, because it's measured at the station, then the airport,
+then the forecast:
+
+| Source | Cloud cover |
+|---|---|
+| `sensors_clouds` | From the same sunlight ratio and thresholds as the condition, by day only |
+| `metar` | The airport's reported sky cover, or its most covered cloud layer. A sky hidden by fog counts as overcast. Works at night. |
+| `nws` | The sky part of the forecast for the current hour (clear, few, scattered, broken or overcast) |
+
+Each sky condition is given the middle of its range in eighths of the sky (oktas): clear 0%, few 19%,
+scattered 44%, broken 75%, overcast 100%. Simple Location uses the same values for the cloud layers
+of National Weather Service observations, so values from different sources line up. If no source
+gives a cloud cover, the file has none.
+
+A station with a solar or lux sensor gets the cloud cover from it by day and from the airport at
+night; a station without one gets it from the airport all the time.
 
 ### Thresholds
 
@@ -128,9 +149,10 @@ The file uses version 1 of the current conditions format:
     "rainrate": 0.0,
     "radiation": 412,
     "uv": 3.1,
-    "code": 802
+    "code": 802,
+    "cloudiness": 44
   },
-  "derived": { "code": "sensors_clouds" },
+  "derived": { "code": "sensors_clouds", "cloudiness": "sensors_clouds" },
   "generator": "weewx-current-json 0.1.0; WeeWX 5.5.2"
 }
 ```
@@ -152,6 +174,7 @@ The file uses version 1 of the current conditions format:
   | `windDir` | `winddegree` | | |
   | `windGust` | `windgust` | | |
 
+* `cloudiness` is the cloud cover in percent, and `derived.cloudiness` names the source it came from.
 * `code` is an OpenWeatherMap-style condition code (800 clear, 801–804 increasing cloud, 500–504
   rain, 600–602 snow, 701 mist, 741 fog, 200–233 thunderstorm, 400 windy), and `derived.code` names
   the source it came from.
