@@ -19,3 +19,5 @@
 * Adds the `sensors_air` conditions source: smoke from raised PM2.5 and VOC index, haze from raised
   PM2.5 in dry air (#5).
 * The installer's settings include `cloud_sources`, `[[AirQuality]]` and `[[Fields]]`.
+* Includes a snow sensor's readings: `snow`, the snowfall in the last hour, summed like rain; `snowdepth`,
+  from `snowDepth`; and `snowrate`, from `snowRate`. Falling snow it measures is the snow condition (#7).

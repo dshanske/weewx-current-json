@@ -84,6 +84,15 @@ class TestObservations(unittest.TestCase):
         self.assertEqual(sl.OBSERVATIONS, sl.fields_from_config({}))
         self.assertEqual(sl.OBSERVATIONS, sl.fields_from_config({'Fields': {}}))
 
+    def test_snow_fields(self):
+        # A US-units snow sensor: 4 in on the ground, falling at 0.5 in/h, and 0.2 in in the last hour.
+        observations = sl.observations_from_record(dict(RECORD, snowDepth=4.0, snowRate=0.5), hour_snow_mm=5.08)
+        self.assertEqual(101.6, observations['snowdepth'])
+        self.assertEqual(12.7, observations['snowrate'])
+        self.assertEqual(5.08, observations['snow'])
+        self.assertNotIn('snow', sl.observations_from_record(RECORD), 'No snow sensor.')
+        self.assertNotIn('snowdepth', sl.observations_from_record(RECORD))
+
     def test_missing_readings_left_out(self):
         observations = sl.observations_from_record(RECORD)
         self.assertNotIn('heatindex', observations, 'None is left out.')
@@ -269,6 +278,18 @@ class TestGenerator(unittest.TestCase):
         document = self.run_generator(record)
         self.assertNotIn('uv', document['observations'], '[[Fields]] from weewx.conf is used.')
         self.assertEqual(140, document['observations']['voc_index'])
+
+    def test_snow_in_the_last_hour(self):
+        with weewx.manager.open_manager_with_config(self.config, 'wx_binding') as manager:
+            for i in range(12):
+                stamp = RECORD['dateTime'] - (11 - i) * 300
+                manager.updateValue(stamp, 'snow', 0.1 if i >= 9 else 0.0)
+        record = dict(RECORD, rainRate=0.0, snowRate=0.4, snowDepth=3.0)
+        document = self.run_generator(record)
+        self.assertEqual(7.62, document['observations']['snow'], 'Three records of 0.1 in, in mm.')
+        self.assertEqual(76.2, document['observations']['snowdepth'])
+        # setUp's records also have rain in the last hour, above freezing: rain and snow.
+        self.assertEqual(616, document['observations']['code'])
 
     def test_uses_report_record(self):
         record = dict(RECORD, outTemp=50.0, rainRate=0.0)
