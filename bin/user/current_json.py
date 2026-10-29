@@ -53,7 +53,7 @@ import user.current_json_forecast as forecasts
 
 log = logging.getLogger(__name__)
 
-VERSION = '0.1.0'
+VERSION = '0.2.0'
 
 FORMAT = 'current-conditions'
 FORMAT_VERSION = 1

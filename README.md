@@ -258,7 +258,7 @@ The file uses version 1 of the current conditions format:
     "rain": 3.05
   },
   "trend": { "hours": 3, "pressure": -1.2, "temperature": 4.6 },
-  "generator": "weewx-current-json 0.1.0; WeeWX 5.5.2"
+  "generator": "weewx-current-json 0.2.0; WeeWX 5.5.2"
 }
 ```
 

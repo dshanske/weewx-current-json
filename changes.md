@@ -1,6 +1,16 @@
 # Changes
 
-## 0.1.0 (unreleased)
+## 0.2.0 (unreleased)
+
+* Adds the National Weather Service forecast and alerts from weewx-nws, if it's installed, as an optional
+  `forecast` section: the one-hour forecasts, the twelve-hour periods and the active alerts, set by
+  `[[Forecast]]`. The rest of the file doesn't change.
+* Adds `today`, the day's high and low temperature, highest gust, and rain and snow so far, and
+  `trend`, the change of pressure and temperature over the last 3 hours, set by `[[Today]]` and
+  `[[Trend]]`.
+* Adds the station's time zone, `station.timezone`, and its offset from UTC, `station.utc_offset`.
+
+## 0.1.0 (not released)
 
 * First version: writes the current conditions format, version 1, each archive interval,
   with conditions derived from the station's sensors, a nearby airport's METAR, or weewx-nws's
@@ -21,10 +31,3 @@
 * The installer's settings include `cloud_sources`, `[[AirQuality]]` and `[[Fields]]`.
 * Includes a snow sensor's readings: `snow`, the snowfall in the last hour, summed like rain; `snowdepth`,
   from `snowDepth`; and `snowrate`, from `snowRate`. Falling snow it measures is the snow condition (#7).
-* Adds the National Weather Service forecast and alerts from weewx-nws, if it's installed, as an optional
-  `forecast` section: the one-hour forecasts, the twelve-hour periods and the active alerts, set by
-  `[[Forecast]]`. The rest of the file doesn't change.
-* Adds `today`, the day's high and low temperature, highest gust, and rain and snow so far, and
-  `trend`, the change of pressure and temperature over the last 3 hours, set by `[[Today]]` and
-  `[[Trend]]`.
-* Adds the station's time zone, `station.timezone`, and its offset from UTC, `station.utc_offset`.

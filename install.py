@@ -16,7 +16,7 @@ import configobj
 
 from setup import ExtensionInstaller
 
-VERSION = '0.1.0'
+VERSION = '0.2.0'
 
 # Written into weewx.conf as text, so its comments are kept. Options that only repeat a default
 # are written commented out, so a later release's better default still applies.
