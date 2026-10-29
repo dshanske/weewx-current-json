@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import tempfile
+import time
 import unittest
 
 from tests import helpers  # noqa: F401 - sets up the path
@@ -11,6 +12,10 @@ import weewx
 import weewx.manager
 import weewx.units
 import user.current_json as sl
+
+# WeeWX works in local time: the day for "today", and the station's time zone.
+os.environ['TZ'] = 'America/New_York'
+time.tzset()
 
 # An archive record from a US-units station: 70.7 F, 29.98 inHg, 8 mph, 0.12 in/h.
 RECORD = {
@@ -138,6 +143,56 @@ class TestStation(unittest.TestCase):
         self.assertEqual({'id': 'weewx'}, station)
 
 
+class TestTimezone(unittest.TestCase):
+
+    def test_local_timezone(self):
+        self.assertEqual('America/New_York', sl.local_timezone(), 'From TZ.')
+
+    def test_utc_offset(self):
+        self.assertEqual(-14400, sl.utc_offset(RECORD['dateTime']), 'Daylight time, in October.')
+        self.assertEqual(-18000, sl.utc_offset(RECORD['dateTime'] + 60 * 86400), 'Standard time, in December.')
+        self.assertEqual(3600 * 11, sl.utc_offset(RECORD['dateTime'], 'Australia/Sydney'))
+        self.assertEqual(-14400, sl.utc_offset(RECORD['dateTime'], 'Not/AZone'), 'An unknown zone is local time.')
+
+    def test_station(self):
+        station = sl.station_from_config({'Station': {}, 'CurrentJSON': {'timezone': 'Europe/Paris'}}, timestamp=RECORD['dateTime'])
+        self.assertEqual({'id': 'weewx', 'timezone': 'Europe/Paris', 'utc_offset': 7200}, station)
+        self.assertNotIn('timezone', sl.station_from_config({'Station': {}}), 'Only with a time.')
+
+
+class TestTodayAndTrend(unittest.TestCase):
+
+    def test_today_from_aggregates(self):
+        values = {
+            ('outTemp', 'max'): weewx.units.ValueTuple(80.6, 'degree_F', 'group_temperature'),
+            ('outTemp', 'maxtime'): weewx.units.ValueTuple(1761228000, 'unix_epoch', 'group_time'),
+            ('outTemp', 'min'): weewx.units.ValueTuple(50.0, 'degree_F', 'group_temperature'),
+            ('outTemp', 'mintime'): weewx.units.ValueTuple(1761210000, 'unix_epoch', 'group_time'),
+            ('windGust', 'max'): weewx.units.ValueTuple(22.0, 'mile_per_hour', 'group_speed'),
+            ('rain', 'sum'): weewx.units.ValueTuple(0.5, 'inch', 'group_rain'),
+            ('snow', 'sum'): weewx.units.ValueTuple(None, 'inch', 'group_rain'),
+        }
+        today = sl.today_from_aggregates(lambda field, agg: values.get((field, agg)), sl.OBSERVATIONS)
+        self.assertEqual({
+            'temperature_max': 27.0, 'temperature_max_time': 1761228000,
+            'temperature_min': 10.0, 'temperature_min_time': 1761210000,
+            'windgust_max': 9.83, 'rain': 12.7,
+        }, today)
+
+    def test_today_reads_mapped_fields(self):
+        fields = sl.fields_from_config({'Fields': {'temperature': 'extraTemp1'}})
+        seen = []
+        sl.today_from_aggregates(lambda field, agg: seen.append(field), fields)
+        self.assertIn('extraTemp1', seen)
+        self.assertNotIn('outTemp', seen)
+
+    def test_trend(self):
+        self.assertEqual({'hours': 3, 'pressure': -1.2, 'temperature': 2.5},
+                         sl.trend({'pressure': 1015.2, 'temperature': 21.5, 'humidity': 60},
+                                  {'pressure': 1016.4, 'temperature': 19.0}, 3))
+        self.assertEqual({}, sl.trend({'humidity': 60}, {'humidity': 50}, 3))
+
+
 class TestDocument(unittest.TestCase):
 
     def test_document(self):
@@ -220,7 +275,8 @@ class TestGenerator(unittest.TestCase):
     def test_writes_file(self):
         document = self.run_generator()
         self.assertEqual(RECORD['dateTime'], document['time'])
-        self.assertEqual({'id': 'weewx', 'name': 'Backyard', 'latitude': 39.9524, 'longitude': -75.1636, 'altitude': 12}, document['station'])
+        self.assertEqual({'id': 'weewx', 'name': 'Backyard', 'latitude': 39.9524, 'longitude': -75.1636, 'altitude': 12,
+                          'timezone': 'America/New_York', 'utc_offset': -14400}, document['station'])
         self.assertEqual(21.5, document['observations']['temperature'])
         self.assertEqual(2.54, document['observations']['rain'], 'The last hour of rain, in mm.')
         # Rain in the hour makes it light rain; sensors_precipitation comes first.
@@ -295,6 +351,36 @@ class TestGenerator(unittest.TestCase):
         record = dict(RECORD, outTemp=50.0, rainRate=0.0)
         document = self.run_generator(record)
         self.assertEqual(10.0, document['observations']['temperature'], 'The record the report engine passed.')
+
+    def test_today(self):
+        document = self.run_generator()
+        # Every record of the hour has the same readings; the last two have 0.05 in of rain.
+        self.assertEqual({
+            'temperature_max': 21.5, 'temperature_max_time': RECORD['dateTime'] - 11 * 300,
+            'temperature_min': 21.5, 'temperature_min_time': RECORD['dateTime'] - 11 * 300,
+            'windgust_max': 6.26, 'windgust_max_time': RECORD['dateTime'] - 11 * 300,
+            'rain': 2.54,
+        }, document['today'])
+
+    def test_today_is_only_today(self):
+        with weewx.manager.open_manager_with_config(self.config, 'wx_binding') as manager:
+            # Yesterday evening was hotter, and rained.
+            manager.addRecord(dict(RECORD, dateTime=RECORD['dateTime'] - 18 * 3600, outTemp=90.0, rain=1.0))
+        today = self.run_generator()['today']
+        self.assertEqual(21.5, today['temperature_max'])
+        self.assertEqual(2.54, today['rain'])
+
+    def test_trend(self):
+        self.assertNotIn('trend', self.run_generator(), 'No record three hours before.')
+        with weewx.manager.open_manager_with_config(self.config, 'wx_binding') as manager:
+            manager.addRecord(dict(RECORD, dateTime=RECORD['dateTime'] - 3 * 3600 + 120, outTemp=66.2, barometer=30.04))
+        self.assertEqual({'hours': 3, 'pressure': -2.1, 'temperature': 2.5}, self.run_generator()['trend'])
+        self.config['CurrentJSON']['Trend'] = {'hours': '0'}
+        self.assertNotIn('trend', self.run_generator())
+
+    def test_today_disabled(self):
+        self.config['CurrentJSON']['Today'] = {'enable': 'false'}
+        self.assertNotIn('today', self.run_generator())
 
     def test_disabled(self):
         self.config['CurrentJSON']['enable'] = 'false'

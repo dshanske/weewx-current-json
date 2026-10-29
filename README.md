@@ -47,6 +47,7 @@ Everything has a default; the installer writes the options into `weewx.conf` com
     attribution_text = ""              # A credit shown with your weather, such as
     attribution_url = ""               # "Weather from Backyard Weather". Empty for none.
     user_agent = ""                    # Sent to aviationweather.gov; please include a contact.
+    timezone = ""                      # Default: the computer's, such as America/New_York.
 
     [[Conditions]]
         sources = sensors_precipitation, sensors_air, metar, sensors_clouds, sensors_wind, nws
@@ -61,6 +62,12 @@ Everything has a default; the installer writes the options into `weewx.conf` com
 
     [[Fields]]
         ...                            # See Fields.
+
+    [[Today]]
+        enable = true                  # The day's highs, lows and totals so far.
+
+    [[Trend]]
+        hours = 3                      # 0 for no trend.
 
     [[Forecast]]
         enable = true                  # Only does anything with weewx-nws installed.
@@ -167,6 +174,25 @@ If there isn't enough PM2.5, the file has no index, rather than a stale one. Tha
 current record has no PM2.5, such as during a sensor outage, or when fewer than 2 of the last 3
 hours have any.
 
+## Today and trend
+
+The file has the day's extremes and totals so far in `today`: the high and low temperature and when
+they were, the highest gust and when it was, and the rain and snow since midnight. The day is the
+station's, in WeeWX's local time. Set `enable = false` in `[[Today]]` to leave it out.
+
+`trend` is how much the pressure and temperature have changed over the last `hours` (3 by
+default), from the archive record nearest that time. It's left out when there's no such record,
+such as in the first hours after a station starts, and with `hours = 0` in `[[Trend]]`.
+
+## Time zone
+
+The station's time zone is in `station.timezone`, as an IANA name such as `America/New_York`, so
+that whatever reads the file can show times in the station's time, wherever it is. WeeWX works in
+the computer's local time, so the extension finds the computer's zone, from `TZ`, `/etc/timezone`
+or `/etc/localtime`. If it can't, the name is left out; set `timezone` in `[CurrentJSON]` to give
+it, which should be the computer's zone. `station.utc_offset` is the offset from UTC, in seconds, at
+the time of the reading, for readers without a time zone database.
+
 ## Forecast
 
 If [weewx-nws](https://github.com/chaunceygardiner/weewx-nws) is installed, the file also has a
@@ -198,7 +224,9 @@ The file uses version 1 of the current conditions format:
     "longitude": -75.1636,
     "altitude": 12,
     "url": "https://weather.example.com/",
-    "attribution": { "text": "Weather from Backyard Weather", "url": "https://weather.example.com/" }
+    "attribution": { "text": "Weather from Backyard Weather", "url": "https://weather.example.com/" },
+    "timezone": "America/New_York",
+    "utc_offset": -14400
   },
   "observations": {
     "temperature": 21.5,
@@ -220,6 +248,16 @@ The file uses version 1 of the current conditions format:
     "aqi_color": "#00e400"
   },
   "derived": { "code": "sensors_clouds", "cloudiness": "sensors_clouds", "aqi": "us_epa" },
+  "today": {
+    "temperature_max": 23.1,
+    "temperature_max_time": 1761229800,
+    "temperature_min": 11.4,
+    "temperature_min_time": 1761206400,
+    "windgust_max": 8.94,
+    "windgust_max_time": 1761224100,
+    "rain": 3.05
+  },
+  "trend": { "hours": 3, "pressure": -1.2, "temperature": 4.6 },
   "generator": "weewx-current-json 0.1.0; WeeWX 5.5.2"
 }
 ```
@@ -251,6 +289,11 @@ The file uses version 1 of the current conditions format:
   from 1 to 500 and without a unit: for VOC, 100 is the sensor's recent average; for NOx, 1 is the
   baseline. WeeWX has no standard fields for them, so add `voc_index` and `nox_index` columns, and
   store the indices there, not a concentration.
+* `station.timezone` and `station.utc_offset` are described in [Time zone](#time-zone).
+* `today` holds the day's extremes so far, in the units of the observations they're of, with the
+  Unix time of each, and `rain` and `snow`, the totals since midnight in mm. Anything the station
+  doesn't measure is left out.
+* `trend` gives the change of `pressure` and `temperature`, in hPa and °C, over the last `hours`.
 * `forecast`, only with weewx-nws, is described [below](#the-forecast-section).
 * `code` is an OpenWeatherMap-style condition code (800 clear, 801–804 increasing cloud, 500–504
   rain, 600–602 snow, 701 mist, 741 fog, 200–233 thunderstorm, 400 windy), and `derived.code` names

@@ -43,6 +43,10 @@ CONFIG = """
     # User-Agent sent to aviationweather.gov when a METAR is used. Please include a contact.
     #user_agent = "weewx-current-json (my-weather-site.com, me@my-weather-site.com)"
 
+    # The station's time zone, as an IANA name such as America/New_York. The default is the
+    # computer's, which WeeWX works in; set it only if the file doesn't have one.
+    #timezone = ""
+
     [[Conditions]]
         # WeeWX doesn't know the conditions, such as "rain" or "partly cloudy", so they are
         # derived from these sources, tried in order; the first that gives one is used.
@@ -82,6 +86,14 @@ CONFIG = """
         # Read a key of the file from a WeeWX field with another name, or leave it out with none.
         #voc_index = voc
         #uv = none
+
+    [[Today]]
+        # The day's high and low temperature, highest gust, and rain and snow so far.
+        #enable = true
+
+    [[Trend]]
+        # Hours over which to give the change of pressure and temperature. 0 for none.
+        #hours = 3
 
     [[Forecast]]
         # If weewx-nws is installed, its NWS forecast and alerts are added to the file. Set
