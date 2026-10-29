@@ -16,7 +16,10 @@ weather provider of the Simple Location WordPress plugin:
       "units": "metric",
       "station": {"id": "...", "name": "...", "latitude": ..., "longitude": ..., "altitude": ...},
       "observations": {"temperature": 21.5, "humidity": 60, ...},
-      "derived": {"code": "sensors_clouds", "cloudiness": "sensors_clouds", "aqi": "us_epa"}
+      "derived": {"code": "sensors_clouds", "cloudiness": "sensors_clouds", "aqi": "us_epa"},
+      "today": {"temperature_max": 24.3, "temperature_max_time": 1761228000, ...},
+      "trend": {"hours": 3, "pressure": -1.2, "temperature": 2.4},
+      "forecast": {"source": "nws", "hourly": [...], "periods": [...], "alerts": [...]}
     }
 
 Values are in metric units, WeeWX's METRICWX system: degrees C, hPa
@@ -24,9 +27,13 @@ Values are in metric units, WeeWX's METRICWX system: degrees C, hPa
 have are left out. The condition code and cloud cover, which WeeWX doesn't have, are derived as
 described in user.current_json_conditions, and "derived" says which source gave each. The air
 quality index, with its category and color, is calculated as described in user.current_json_air,
-and "derived" names its scale.
+and "derived" names its scale. "today" holds the day's extremes and totals so far, and "trend" the
+change over the last few hours. If weewx-nws is installed, "forecast" holds its forecast and
+alerts, as described in user.current_json_forecast; it is optional, and adds to the format without
+changing anything else in it.
 """
 
+import datetime
 import json
 import logging
 import os
@@ -38,14 +45,15 @@ import weewx.manager
 import weewx.reportengine
 import weewx.units
 import weewx.xtypes
-from weeutil.weeutil import TimeSpan, to_bool
+from weeutil.weeutil import TimeSpan, archiveDaySpan, to_bool, to_int
 
 import user.current_json_air as air
 import user.current_json_conditions as conditions
+import user.current_json_forecast as forecasts
 
 log = logging.getLogger(__name__)
 
-VERSION = '0.1.0'
+VERSION = '0.2.0'
 
 FORMAT = 'current-conditions'
 FORMAT_VERSION = 1
@@ -155,8 +163,73 @@ def observations_from_record(record, hour_rain_mm=None, fields=None, hour_snow_m
     return observations
 
 
-def station_from_config(config_dict, stn_info=None):
-    """Returns the station description from weewx.conf's [Station] and [CurrentJSON] sections."""
+# The keys of the "today" section: (key, file key it's of, aggregate), all from the day so far.
+TODAY = (
+    ('temperature_max', 'temperature', 'max'),
+    ('temperature_max_time', 'temperature', 'maxtime'),
+    ('temperature_min', 'temperature', 'min'),
+    ('temperature_min_time', 'temperature', 'mintime'),
+    ('windgust_max', 'windgust', 'max'),
+    ('windgust_max_time', 'windgust', 'maxtime'),
+)
+
+# The file keys "trend" gives the change of.
+TREND_KEYS = ('pressure', 'temperature')
+DEFAULT_TREND_HOURS = 3
+
+
+def local_timezone():
+    """Returns the IANA name of the computer's time zone, such as America/New_York, or None.
+
+    WeeWX works in the computer's local time, so this is the station's time zone. It's read from
+    TZ, /etc/timezone or the target of /etc/localtime, whichever first names a known zone.
+    """
+    candidates = []
+    tz = os.environ.get('TZ', '').lstrip(':')
+    if tz:
+        candidates.append(tz)
+    try:
+        with open('/etc/timezone', encoding='utf-8') as f:
+            candidates.append(f.read().strip())
+    except OSError:
+        pass
+    target = os.path.realpath('/etc/localtime')
+    if '/zoneinfo/' in target:
+        name = target.split('/zoneinfo/', 1)[1]
+        for prefix in ('posix/', 'right/'):
+            if name.startswith(prefix):
+                name = name[len(prefix):]
+        candidates.append(name)
+    for name in candidates:
+        if _zone(name) is not None:
+            return name
+    return None
+
+
+def _zone(name):
+    """Returns the zoneinfo time zone of an IANA name, or None if it isn't one."""
+    if not name or name.startswith('/') or '..' in name:
+        return None
+    try:
+        import zoneinfo
+        return zoneinfo.ZoneInfo(name)
+    except Exception:  # noqa: BLE001 - no zoneinfo, no tz database, or an unknown name
+        return None
+
+
+def utc_offset(timestamp, timezone=None):
+    """Returns the offset from UTC, in seconds, at a time, in the named zone or the computer's local time."""
+    zone = _zone(timezone)
+    if zone is not None:
+        return int(datetime.datetime.fromtimestamp(timestamp, zone).utcoffset().total_seconds())
+    return int(time.localtime(timestamp).tm_gmtoff)
+
+
+def station_from_config(config_dict, stn_info=None, timestamp=None):
+    """Returns the station description from weewx.conf's [Station] and [CurrentJSON] sections.
+
+    With a timestamp, it includes the time zone, and its offset from UTC at that time.
+    """
     station_dict = config_dict.get('Station', {})
     sloc_dict = config_dict.get('CurrentJSON', {})
 
@@ -187,11 +260,61 @@ def station_from_config(config_dict, stn_info=None):
         if attribution_url:
             attribution['url'] = str(attribution_url)
         station['attribution'] = attribution
+    if timestamp is not None:
+        timezone = str(sloc_dict.get('timezone') or '') or local_timezone()
+        if timezone:
+            station['timezone'] = timezone
+        station['utc_offset'] = utc_offset(timestamp, timezone)
     return station
 
 
+def today_from_aggregates(aggregate, fields):
+    """Returns the "today" section: the day's extremes and totals so far, in the file's units.
+
+    Args:
+        aggregate (callable): Called with a WeeWX field and an aggregate, such as 'max' or 'sum',
+            returns the aggregate over the day so far as a ValueTuple, or None.
+        fields (dict): File keys keyed by WeeWX field, from fields_from_config().
+    """
+    field_of = {key: name for name, key in fields.items()}
+    today = {}
+    for key, file_key, aggregate_type in TODAY:
+        name = field_of.get(file_key)
+        value = aggregate(name, aggregate_type) if name else None
+        if value is None or value.value is None:
+            continue
+        if aggregate_type.endswith('time'):
+            today[key] = int(value.value)
+        else:
+            # A field WeeWX doesn't know the unit of is taken as it is, as for the observations.
+            unit = weewx.units.getStandardUnitType(weewx.METRICWX, name)[0]
+            if unit and value.unit:
+                value = weewx.units.convert(value, unit)
+            today[key] = round(float(value.value), PRECISION.get(file_key, 2))
+    for key in ('rain', 'snow'):
+        value = aggregate(key, 'sum')
+        if value is not None and value.value is not None:
+            today[key] = round(float(weewx.units.convert(value, 'mm').value), 2)
+    return today
+
+
+def trend(observations, earlier, hours):
+    """Returns the "trend" section: the change of pressure and temperature since an earlier record.
+
+    Args:
+        observations (dict): The current observations, from observations_from_record().
+        earlier (dict): The observations of the record from `hours` before.
+        hours (int): How many hours before.
+    """
+    changes = {}
+    for key in TREND_KEYS:
+        if key in observations and key in earlier:
+            changes[key] = round(observations[key] - earlier[key], PRECISION.get(key, 2))
+    return dict(hours=hours, **changes) if changes else {}
+
+
 def build_document(record, station, observations, code=None, source=None, cloudiness=None, cloud_source=None,
-                   air_quality=None, aqi_scale=None):
+                   air_quality=None, aqi_scale=None, forecast=None, today=None, trend=None):
     """Returns the JSON document, as a dict.
 
     Args:
@@ -205,6 +328,10 @@ def build_document(record, station, observations, code=None, source=None, cloudi
         air_quality (dict|None): 'aqi', 'aqi_category' and 'aqi_color', from
             user.current_json_air.air_quality(), or empty without an index.
         aqi_scale (str|None): The scale of the index.
+        forecast (dict|None): The forecast section, from user.current_json_forecast.read_forecast(),
+            or empty to leave it out.
+        today (dict|None): The today section, from today_from_aggregates(), or empty to leave it out.
+        trend (dict|None): The trend section, from trend(), or empty to leave it out.
     """
     document = {
         'format': FORMAT,
@@ -226,6 +353,12 @@ def build_document(record, station, observations, code=None, source=None, cloudi
         derived['aqi'] = aqi_scale
     if derived:
         document['derived'] = derived
+    if today:
+        document['today'] = today
+    if trend:
+        document['trend'] = trend
+    if forecast:
+        document['forecast'] = forecast
     document['generator'] = 'weewx-current-json %s; WeeWX %s' % (VERSION, weewx.__version__)
     return document
 
@@ -273,10 +406,11 @@ class CurrentJSONGenerator(weewx.reportengine.ReportGenerator):
         )
 
         user_agent = sloc_dict.get('user_agent') or ('weewx-current-json/%s' % VERSION)
+        nws_manager_opener = self.nws_manager_opener()
         sources = conditions.ConditionSources(
             sloc_dict.get('Conditions', {}),
             user_agent,
-            nws_manager_opener=self.nws_manager_opener(),
+            nws_manager_opener=nws_manager_opener,
         )
         metric = weewx.units.to_METRICWX(record)
         code, source = sources.condition(
@@ -302,7 +436,7 @@ class CurrentJSONGenerator(weewx.reportengine.ReportGenerator):
 
         document = build_document(
             record,
-            station_from_config(self.config_dict, self.stn_info),
+            station_from_config(self.config_dict, self.stn_info, timestamp),
             observations,
             code,
             source,
@@ -310,6 +444,9 @@ class CurrentJSONGenerator(weewx.reportengine.ReportGenerator):
             cloud_source,
             air_quality,
             aqi_scale,
+            self.forecast(nws_manager_opener, sloc_dict.get('Forecast', {}), timestamp),
+            self.today(manager, sloc_dict.get('Today', {}), timestamp, fields),
+            self.trend(manager, sloc_dict.get('Trend', {}), record, observations, fields),
         )
         path = os.path.join(self.html_root(), sloc_dict.get('filename', 'current.json'))
         write_atomically(path, document)
@@ -369,6 +506,48 @@ class CurrentJSONGenerator(weewx.reportengine.ReportGenerator):
                 mean = weewx.units.convert(mean, 'microgram_per_meter_cubed')
             means.append(float(mean.value))
         return means
+
+    @staticmethod
+    def today(manager, today_dict, timestamp, fields):
+        """Returns the today section, or None if [[Today]] disables it."""
+        if not to_bool((today_dict or {}).get('enable', True)):
+            return None
+        span = archiveDaySpan(timestamp)
+        span = TimeSpan(span.start, timestamp)
+
+        def aggregate(field, aggregate_type):
+            try:
+                return weewx.xtypes.get_aggregate(field, span, aggregate_type, manager)
+            except (weewx.UnknownType, weewx.UnknownAggregation):
+                return None
+
+        return today_from_aggregates(aggregate, fields)
+
+    @staticmethod
+    def trend(manager, trend_dict, record, observations, fields):
+        """Returns the trend section, or None if [[Trend]] sets hours to 0 or there's no earlier record."""
+        hours = to_int((trend_dict or {}).get('hours', DEFAULT_TREND_HOURS))
+        if not hours or hours <= 0:
+            return None
+        # The record nearest the time, within an archive interval or so either side.
+        interval = (record.get('interval') or 5) * 60
+        earlier = manager.getRecord(record['dateTime'] - hours * 3600, max_delta=max(interval, 300))
+        if not earlier:
+            return None
+        return trend(observations, observations_from_record(earlier, fields=fields), hours)
+
+    @staticmethod
+    def forecast(nws_manager_opener, forecast_dict, timestamp):
+        """Returns the forecast section from weewx-nws, or None without weewx-nws or with [[Forecast]] disabled."""
+        options = forecasts.options_from_config(forecast_dict)
+        if options is None or nws_manager_opener is None:
+            return None
+        try:
+            with nws_manager_opener() as manager:
+                return forecasts.read_forecast(manager, timestamp, **options)
+        except Exception as e:  # noqa: BLE001 - weewx-nws's database unavailable or not as expected
+            log.info("Could not read the weewx-nws forecast: %s", e)
+            return None
 
     def nws_manager_opener(self):
         """Returns a function opening weewx-nws's database, or None if weewx-nws isn't configured."""

@@ -16,7 +16,7 @@ import configobj
 
 from setup import ExtensionInstaller
 
-VERSION = '0.1.0'
+VERSION = '0.2.0'
 
 # Written into weewx.conf as text, so its comments are kept. Options that only repeat a default
 # are written commented out, so a later release's better default still applies.
@@ -42,6 +42,10 @@ CONFIG = """
 
     # User-Agent sent to aviationweather.gov when a METAR is used. Please include a contact.
     #user_agent = "weewx-current-json (my-weather-site.com, me@my-weather-site.com)"
+
+    # The station's time zone, as an IANA name such as America/New_York. The default is the
+    # computer's, which WeeWX works in; set it only if the file doesn't have one.
+    #timezone = ""
 
     [[Conditions]]
         # WeeWX doesn't know the conditions, such as "rain" or "partly cloudy", so they are
@@ -83,6 +87,26 @@ CONFIG = """
         #voc_index = voc
         #uv = none
 
+    [[Today]]
+        # The day's high and low temperature, highest gust, and rain and snow so far.
+        #enable = true
+
+    [[Trend]]
+        # Hours over which to give the change of pressure and temperature. 0 for none.
+        #hours = 3
+
+    [[Forecast]]
+        # If weewx-nws is installed, its NWS forecast and alerts are added to the file. Set
+        # enable to false to leave them out.
+        #enable = true
+
+        # Most one-hour forecasts, and twelve-hour forecast periods, to include. 0 for none.
+        #hours = 24
+        #periods = 14
+
+        # Whether to include the active NWS alerts.
+        #alerts = true
+
 [StdReport]
     [[CurrentJSON]]
         skin = CurrentJSON
@@ -104,7 +128,8 @@ class CurrentJSONInstaller(ExtensionInstaller):
             author_email='david@shanske.com',
             config=configobj.ConfigObj(StringIO(CONFIG)),
             files=[
-                ('bin/user', ['bin/user/current_json.py', 'bin/user/current_json_air.py', 'bin/user/current_json_conditions.py']),
+                ('bin/user', ['bin/user/current_json.py', 'bin/user/current_json_air.py', 'bin/user/current_json_conditions.py',
+                              'bin/user/current_json_forecast.py']),
                 ('skins/CurrentJSON', ['skins/CurrentJSON/skin.conf']),
             ],
         )
