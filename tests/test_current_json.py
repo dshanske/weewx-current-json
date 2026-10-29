@@ -32,8 +32,8 @@ RECORD = {
     'heatindex': None,
 }
 
-# A record with an SGP41 gas sensor's indices, in WeeWX's custom voc and nox columns, and CO2.
-GAS_RECORD = dict(RECORD, voc=112.4, nox=1.0, co2=421.0)
+# A record with an SGP41 gas sensor's indices, in custom voc_index and nox_index columns, and CO2.
+GAS_RECORD = dict(RECORD, voc_index=112.4, nox_index=1.0, co2=421.0)
 
 
 class FakeStation:
@@ -65,8 +65,24 @@ class TestObservations(unittest.TestCase):
         self.assertEqual(1, observations['nox_index'])
         self.assertIsInstance(observations['voc_index'], int)
         self.assertEqual(421.0, observations['co2'])
-        self.assertNotIn('voc', observations, 'Renamed, not copied.')
         self.assertNotIn('voc_index', sl.observations_from_record(RECORD), 'No gas sensor.')
+
+    def test_fields(self):
+        fields = sl.fields_from_config({'Fields': {'voc_index': 'voc', 'nox_index': 'nox', 'uv': 'none', 'bogus': 'x'}})
+        self.assertEqual('voc_index', fields['voc'])
+        self.assertNotIn('voc_index', fields, 'The default field is replaced, not kept as well.')
+        self.assertNotIn('UV', fields, 'An empty or none field leaves the key out.')
+        self.assertNotIn('x', fields, 'Only the file\'s keys can be mapped.')
+        self.assertEqual('temperature', fields['outTemp'], 'Unmapped keys keep their defaults.')
+
+        observations = sl.observations_from_record(dict(RECORD, voc=112.4, nox=2.0, voc_index=999), fields=fields)
+        self.assertEqual(112, observations['voc_index'], 'Read from voc, not the default field.')
+        self.assertEqual(2, observations['nox_index'])
+        self.assertNotIn('uv', observations)
+
+    def test_fields_default(self):
+        self.assertEqual(sl.OBSERVATIONS, sl.fields_from_config({}))
+        self.assertEqual(sl.OBSERVATIONS, sl.fields_from_config({'Fields': {}}))
 
     def test_missing_readings_left_out(self):
         observations = sl.observations_from_record(RECORD)
@@ -191,6 +207,13 @@ class TestGenerator(unittest.TestCase):
         # Rain in the hour makes it light rain; sensors_precipitation comes first.
         self.assertEqual(500, document['observations']['code'])
         self.assertEqual({'code': 'sensors_precipitation'}, document['derived'])
+
+    def test_fields_config(self):
+        self.config['CurrentJSON']['Fields'] = {'uv': 'none', 'voc_index': 'voc'}
+        record = dict(RECORD, rainRate=0.0, voc=140.0)
+        document = self.run_generator(record)
+        self.assertNotIn('uv', document['observations'], '[[Fields]] from weewx.conf is used.')
+        self.assertEqual(140, document['observations']['voc_index'])
 
     def test_uses_report_record(self):
         record = dict(RECORD, outTemp=50.0, rainRate=0.0)

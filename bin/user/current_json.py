@@ -48,7 +48,8 @@ FORMAT = 'current-conditions'
 FORMAT_VERSION = 1
 
 # WeeWX observation types and the key each one becomes in the file. Rain is the last hour's
-# total, added separately, and lightning only feeds the condition.
+# total, added separately, and lightning only feeds the condition. [CurrentJSON] [[Fields]] can
+# read a key from another WeeWX field; see fields_from_config().
 OBSERVATIONS = {
     'outTemp': 'temperature',
     'outHumidity': 'humidity',
@@ -72,9 +73,10 @@ OBSERVATIONS = {
     'o3': 'o3',
     'pb': 'pb',
     'so2': 'so2',
-    # Sensirion SGP40/SGP41 gas indices, 1-500, without a unit.
-    'voc': 'voc_index',
-    'nox': 'nox_index',
+    # Sensirion SGP40/SGP41 gas indices, 1-500, without a unit. WeeWX has no standard names for
+    # these, so they're read from fields named after what they hold.
+    'voc_index': 'voc_index',
+    'nox_index': 'nox_index',
 }
 
 # Decimal places for each key; anything else is rounded to 2.
@@ -94,19 +96,47 @@ PRECISION = {
 }
 
 
-def observations_from_record(record, hour_rain_mm=None):
+def fields_from_config(sloc_dict):
+    """Returns the WeeWX field each of the file's keys is read from, with [[Fields]] applied.
+
+    [[Fields]] maps a key of the file to the WeeWX field to read it from, such as
+    ``voc_index = voc`` for a station that stores the VOC index in a field named voc. An empty
+    value, or ``none``, leaves the key out. Only the file's own keys can be mapped.
+
+    Args:
+        sloc_dict (dict): The [CurrentJSON] section.
+
+    Returns:
+        dict: File keys, keyed by WeeWX field, like OBSERVATIONS.
+    """
+    fields = dict(OBSERVATIONS)
+    known = set(OBSERVATIONS.values())
+    for key, weewx_name in ((sloc_dict or {}).get('Fields') or {}).items():
+        if key not in known:
+            log.error("Ignoring [[Fields]] %s: not a key of the file", key)
+            continue
+        fields = {name: file_key for name, file_key in fields.items() if file_key != key}
+        weewx_name = str(weewx_name or '').strip()
+        if weewx_name and weewx_name.lower() != 'none':
+            fields[weewx_name] = key
+    return fields
+
+
+def observations_from_record(record, hour_rain_mm=None, fields=None):
     """Converts an archive record to the file's observations.
 
     Args:
         record (dict): A WeeWX archive record, in any unit system.
         hour_rain_mm (float|None): Rain in the hour ending at the record, in mm.
+        fields (dict|None): File keys keyed by WeeWX field, from fields_from_config(). Default
+            OBSERVATIONS.
 
     Returns:
         dict: Observations keyed by the file's names, in its units, without missing readings.
     """
     metric = weewx.units.to_METRICWX(record)
     observations = {}
-    for weewx_name, key in OBSERVATIONS.items():
+    for weewx_name, key in (OBSERVATIONS if fields is None else fields).items():
         value = metric.get(weewx_name)
         if isinstance(value, (int, float)) and not isinstance(value, bool):
             precision = PRECISION.get(key, 2)
@@ -210,7 +240,7 @@ class CurrentJSONGenerator(weewx.reportengine.ReportGenerator):
             return
 
         timestamp = record['dateTime']
-        observations = observations_from_record(record, self.hour_rain(manager, timestamp))
+        observations = observations_from_record(record, self.hour_rain(manager, timestamp), fields_from_config(sloc_dict))
 
         user_agent = sloc_dict.get('user_agent') or ('weewx-current-json/%s' % VERSION)
         sources = conditions.ConditionSources(
