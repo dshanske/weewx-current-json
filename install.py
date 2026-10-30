@@ -16,7 +16,7 @@ import configobj
 
 from setup import ExtensionInstaller
 
-VERSION = '0.2.0'
+VERSION = '0.3.0'
 
 # Written into weewx.conf as text, so its comments are kept. Options that only repeat a default
 # are written commented out, so a later release's better default still applies.
@@ -92,8 +92,23 @@ CONFIG = """
         #uv = none
 
     [[Today]]
-        # The day's high and low temperature, highest gust, and rain and snow so far.
+        # The day's high and low temperature, highest gust, totals and degree days so far.
         #enable = true
+
+        # The same for yesterday.
+        #yesterday = true
+
+    [[Records]]
+        # The highs, lows and totals of longer periods: week, month, year, rain_year (if
+        # [Station] rain_year_start isn't January) and all_time.
+        #enable = true
+        #periods = week, month, year, rain_year, all_time
+
+    [[Rain]]
+        # Rain in the last 24 hours, when it last rained, and the current storm: the rain since
+        # it started without a dry spell longer than storm_gap hours.
+        #enable = true
+        #storm_gap = 24
 
     [[Trend]]
         # Hours over which to give the change of pressure and temperature. 0 for none.
@@ -109,6 +124,37 @@ CONFIG = """
         # Sunrise, sunset and the moon phase; with PyEphem installed, also twilight,
         # moonrise, moonset and the next full and new moon.
         #enable = true
+
+    [[Sensors]]
+        # Indoor readings and extra sensors (extraTemp1-8, extraHumid1-8, soilTemp1-4,
+        # soilMoist1-4, leafTemp1-2, leafWet1-2). Off, since they say something about your home.
+        #indoor = false
+        #extra = false
+        [[[Names]]]
+            # Names for the extra sensors, such as:
+            #extraTemp1 = Greenhouse
+
+    [[Health]]
+        # The hardware's battery, voltage and signal readings, with warnings for low batteries
+        # and a weak signal.
+        #enable = true
+        # Percent of packets received below which the signal is weak.
+        #weak_signal = 50
+        [[[Batteries]]]
+            # How each battery status is reported, if not 0 for OK and anything else for low:
+            # level (0 to 5, low at 1 or less) or none (never warn).
+            #batteryStatus1 = level
+        [[[Names]]]
+            # Names to use in warnings, such as:
+            #batteryStatus1 = Pool sensor
+
+    [[Archives]]
+        # Longer history in files of their own beside this one, which apps fetch only when
+        # they want them: the last week hourly, rewritten hourly, and the last year daily,
+        # rewritten every 3 hours. Empty a name to leave that file out.
+        #enable = false
+        #week = history-week.json
+        #year = history-year.json
 
     [[Forecast]]
         # If weewx-nws is installed, its NWS forecast and alerts are added to the file. Set
@@ -145,7 +191,9 @@ class CurrentJSONInstaller(ExtensionInstaller):
             files=[
                 ('bin/user', ['bin/user/current_json.py', 'bin/user/current_json_air.py', 'bin/user/current_json_conditions.py',
                               'bin/user/current_json_forecast.py', 'bin/user/current_json_history.py',
-                              'bin/user/current_json_almanac.py']),
+                              'bin/user/current_json_almanac.py', 'bin/user/current_json_records.py',
+                              'bin/user/current_json_rain.py', 'bin/user/current_json_sensors.py',
+                              'bin/user/current_json_archives.py']),
                 ('skins/CurrentJSON', ['skins/CurrentJSON/skin.conf']),
             ],
         )

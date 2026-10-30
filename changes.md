@@ -1,6 +1,6 @@
 # Changes
 
-## Unreleased
+## 0.3.0
 
 * Adds `history`, each reading over the last 24 hours in half-hour intervals, for charts, set by
   `[[History]]`.
@@ -8,8 +8,22 @@
   civil twilight, moonrise, moonset and the next full and new moon, set by `[[Almanac]]`.
 * Adds `webcam_url`, an image from the station's webcam, as `station.webcam`.
 * Names the airport in `derived.metar_station` when its METAR gave the condition or cloud cover.
+* Adds `yesterday`, and `records` for the week, month, year, rain year and all time: highs, lows
+  and totals, from WeeWX's daily summaries, set by `[[Records]]`.
+* Adds evapotranspiration, wind run, lightning strikes and heating, cooling and growing degree days
+  to `today`.
+* Adds `rain`: the last 24 hours, when it last rained, and the current storm, set by `[[Rain]]`.
+* Adds the apparent temperature, `apptemp`, the cloud base, `cloudbase`, and lightning in the last
+  hour, `lightning_strikes` and `lightning_distance`, to the observations.
+* Adds `indoor` and extra `sensors`, both off unless `[[Sensors]]` turns them on, with names for
+  each extra sensor.
+* Adds `health`: battery, voltage and signal readings, with warnings, set by `[[Health]]`.
+* Adds optional archive files, `history-week.json` and `history-year.json`, named in `archives`,
+  set by `[[Archives]]`, off by default.
+* `today` leaves out totals for sensors the station doesn't have, which WeeWX's daily summaries
+  gave as 0.
 
-## 0.2.0 (unreleased)
+## 0.2.0
 
 * Adds the National Weather Service forecast and alerts from weewx-nws, if it's installed, as an optional
   `forecast` section: the one-hour forecasts, the twelve-hour periods and the active alerts, set by

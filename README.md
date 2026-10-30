@@ -66,6 +66,15 @@ Everything has a default; the installer writes the options into `weewx.conf` com
 
     [[Today]]
         enable = true                  # The day's highs, lows and totals so far.
+        yesterday = true               # And yesterday's.
+
+    [[Records]]
+        enable = true
+        periods = week, month, year, rain_year, all_time
+
+    [[Rain]]
+        enable = true
+        storm_gap = 24                 # Hours without rain that end a storm.
 
     [[Trend]]
         hours = 3                      # 0 for no trend.
@@ -76,6 +85,25 @@ Everything has a default; the installer writes the options into `weewx.conf` com
 
     [[Almanac]]
         enable = true                  # Sun and moon times.
+
+    [[Sensors]]
+        indoor = false                 # Indoor temperature and humidity.
+        extra = false                  # Extra, soil and leaf sensors.
+        [[[Names]]]
+            ...                        # Such as extraTemp1 = Greenhouse.
+
+    [[Health]]
+        enable = true                  # Batteries, voltages and signal, with warnings.
+        weak_signal = 50               # Percent received below which the signal is weak.
+        [[[Batteries]]]
+            ...                        # See Health.
+        [[[Names]]]
+            ...
+
+    [[Archives]]
+        enable = false                 # Longer history in files of their own.
+        week = history-week.json
+        year = history-year.json
 
     [[Forecast]]
         enable = true                  # Only does anything with weewx-nws installed.
@@ -192,6 +220,57 @@ station's, in WeeWX's local time. Set `enable = false` in `[[Today]]` to leave i
 default), from the archive record nearest that time. It's left out when there's no such record,
 such as in the first hours after a station starts, and with `hours = 0` in `[[Trend]]`.
 
+## Yesterday and records
+
+`yesterday` has the same highs, lows and totals as `today`, for the whole of yesterday. Set
+`yesterday = false` in `[[Today]]` to leave it out.
+
+`records` has them for longer periods, each from its start to the end of today: `week`, `month`,
+`year`, `rain_year` and `all_time`. The week starts on `[Station] week_start`, and the rain year in
+`[Station] rain_year_start`; the rain year is left out when it starts in January, being the same as
+the year. All of it comes from WeeWX's daily summaries, so even `all_time` takes only a few queries.
+Choose the periods with `periods` in `[[Records]]`, or set `enable = false`.
+
+`today`, `yesterday` and each period but `all_time` also have heating, cooling and growing degree
+days, from each day's mean temperature and the bases in `[StdReport] [[Defaults]] [[[Units]]]
+[[[[DegreeDays]]]]`, as WeeWX's reports use (65 °F, 65 °F and 50 °F by default).
+
+## Rain
+
+`rain` has the rain in the last 24 hours, the time of the last archive record with rain, and the
+current storm: the rain since it started raining without a dry spell longer than `storm_gap` hours
+(24 by default). The storm is left out when it hasn't rained within `storm_gap` hours.
+
+## Sensors and health
+
+Indoor readings and extra sensors say something about your home and garden, so they're only in the
+file when you turn them on in `[[Sensors]]`: `indoor = true` adds `indoor`, from `inTemp`,
+`inHumidity` and `inDewpoint`, and `extra = true` adds `sensors`, from WeeWX's `extraTemp1`–`8`,
+`extraHumid1`–`8`, `soilTemp1`–`4`, `soilMoist1`–`4`, `leafTemp1`–`2` and `leafWet1`–`2`. Name
+them in `[[[Names]]]`, such as `extraTemp1 = Greenhouse`; otherwise they're called "Temperature 1"
+and so on.
+
+`health` has what the hardware says about itself: battery status, voltages, and signal (such as
+`rxCheckPercent`, the share of packets received), with a warning for each low battery and for a
+weak signal. Drivers report battery status differently: by default 0 is OK and anything else is
+low, as most drivers report it. In `[[[Batteries]]]`, set a field to `level` if it's a level from 0
+to 5 (low at 1 or less), or `none` to never warn about it, and name it for the warnings in
+`[[[Names]]]`. Set `enable = false` in `[[Health]]` to leave it out.
+
+## Archives
+
+The file only holds the last day, since it's fetched often. With `enable = true` in
+`[[Archives]]`, two more files are written beside it, and the file names them in `archives`, so
+apps can fetch them when they want a longer chart:
+
+* `history-week.json`: the last 7 days in hourly intervals, in the same shape as `history`,
+  rewritten at most once an hour.
+* `history-year.json`: the last 365 days, one value per day from the daily summaries, rewritten at
+  most every 3 hours.
+
+Set `week` or `year` to an empty name to leave that file out. They're described under
+[The archive files](#the-archive-files).
+
 ## History
 
 `history` has each reading over the last `hours` (24 by default), summarized over intervals of
@@ -288,7 +367,26 @@ The file uses version 1 of the current conditions format:
     "windgust_max_time": 1761224100,
     "rain": 3.05
   },
+  "yesterday": {
+    "temperature_max": 19.4,
+    "temperature_max_time": 1761148200,
+    "temperature_min": 9.8,
+    "temperature_min_time": 1761121800,
+    "windgust_max": 7.6,
+    "windgust_max_time": 1761139800,
+    "rain": 0.0,
+    "heatdeg": 3.9,
+    "cooldeg": 0.0,
+    "growdeg": 4.4
+  },
+  "records": {
+    "week": { "temperature_max": 23.1, "temperature_max_time": 1761229800, "rain": 12.7, "...": "..." },
+    "month": { "...": "..." },
+    "year": { "...": "..." },
+    "all_time": { "...": "..." }
+  },
   "trend": { "hours": 3, "pressure": -1.2, "temperature": 4.6 },
+  "rain": { "last_24h": 3.05, "last": 1761228000, "storm": 3.05, "storm_start": 1761213600 },
   "almanac": {
     "sunrise": 1761218383,
     "sunset": 1761257375,
@@ -307,8 +405,25 @@ The file uses version 1 of the current conditions format:
     "temperature": [12.1, 11.8, 11.6, "...", 21.3, 21.5],
     "rain": [0.0, 0.0, 0.0, "...", 0.25, 1.02]
   },
-  "generator": "weewx-current-json 0.2.0; WeeWX 5.5.2"
+  "health": {
+    "batteries": { "outTempBatteryStatus": 0, "windBatteryStatus": 1 },
+    "voltages": { "consBatteryVoltage": 4.62 },
+    "signal": { "rxCheckPercent": 97 },
+    "warnings": [{ "field": "windBatteryStatus", "message": "Wind sensor battery low" }]
+  },
+  "archives": { "week": "history-week.json", "year": "history-year.json" },
+  "generator": "weewx-current-json 0.3.0; WeeWX 5.5.2"
 }
+```
+
+With `[[Sensors]]` turned on, it also has:
+
+```json
+"indoor": { "temperature": 21.2, "humidity": 45, "dewpoint": 8.9 },
+"sensors": [
+  { "field": "extraTemp1", "name": "Greenhouse", "kind": "temperature", "value": 24.1 },
+  { "field": "soilMoist1", "name": "Soil moisture 1", "kind": "soil_moisture", "value": 18 }
+]
 ```
 
 * `time` is the archive record's time, in Unix seconds.
@@ -329,6 +444,7 @@ The file uses version 1 of the current conditions format:
   | `windSpeed` | `windspeed` | `co`, `co2`, `nh3`, `o3`, `pb`, `so2` | the same |
   | `windDir` | `winddegree` | `voc_index` | `voc_index` |
   | `windGust` | `windgust` | `nox_index` | `nox_index` |
+  | `appTemp` | `apptemp` | `cloudbase` | `cloudbase` |
 
   To read a key from a field with another name, see [Fields](#fields).
 * `cloudiness` is the cloud cover in percent, and `derived.cloudiness` names the source it came from.
@@ -342,7 +458,20 @@ The file uses version 1 of the current conditions format:
 * `today` holds the day's extremes so far, in the units of the observations they're of, with the
   Unix time of each, and `rain` and `snow`, the totals since midnight in mm. Anything the station
   doesn't measure is left out.
+* `today` also has the day's evapotranspiration, `et`, in mm; wind run, `windrun`, in km;
+  lightning strikes, `lightning_strikes`; and heating, cooling and growing degree days, `heatdeg`,
+  `cooldeg` and `growdeg`, in °C-days. Totals of sensors the station doesn't have are left out.
+* `yesterday` and each period of `records` have the same keys as `today`; see
+  [Yesterday and records](#yesterday-and-records).
 * `trend` gives the change of `pressure` and `temperature`, in hPa and °C, over the last `hours`.
+* `rain` times are Unix seconds and amounts mm; see [Rain](#rain).
+* `apptemp` is WeeWX's apparent temperature, in °C, and `cloudbase` its estimate of the height of
+  the cloud base, in meters. `lightning_strikes` is the number of strikes in the last hour, and
+  `lightning_distance` the distance of the latest, in km, when there were any.
+* `indoor` is in °C and percent. In `sensors`, temperatures are °C, humidity percent,
+  `soil_moisture` centibars and `leaf_wetness` from 0 (dry) to 15 (wet).
+* `health` gives the readings as the driver reports them; see [Sensors and health](#sensors-and-health).
+* `archives` names the archive files, relative to this one.
 * `almanac` times are Unix seconds. `moon_phase` is 0 to 7: new, waxing crescent, first quarter,
   waxing gibbous, full, waning gibbous, last quarter and waning crescent. `moon_fullness` is the
   percentage of the moon that's lit. A sunrise or sunset that doesn't happen that day, near the
@@ -397,6 +526,38 @@ The file uses version 1 of the current conditions format:
   expires. NWS doesn't always give an onset or end.
 * Anything weewx-nws doesn't have is left out: `hourly`, `periods` or `alerts` when there are
   none, and any key of an hour, period or alert.
+
+### The archive files
+
+```json
+{
+  "format": "current-conditions-history",
+  "version": 1,
+  "time": 1761231600,
+  "units": "metric",
+  "station": { "id": "weewx" },
+  "history": { "start": 1760630400, "interval": 3600, "temperature": [12.1, "..."], "rain": [0.0, "..."] }
+}
+```
+
+`history-week.json` has a `history` like the one in `current.json`, with hourly intervals over 7
+days. `history-year.json` has a `daily` section instead:
+
+```json
+"daily": {
+  "time": [1729656000, 1729742400, "..."],
+  "temperature": [14.2, 15.1, "..."],
+  "temperature_min": [8.3, 9.0, "..."],
+  "temperature_max": [19.9, 21.4, "..."],
+  "rain": [0.0, 3.3, "..."],
+  "windgust": [8.9, 12.1, "..."]
+}
+```
+
+`time` is the start of each day, in Unix seconds, since days aren't all the same length. Each list
+has one value per day, oldest first, with `null` for a day without data. A total, such as rain, is
+the day's sum, and the gust and rates its highest. Everything else has its mean under its own key,
+and its lowest and highest under `_min` and `_max`.
 
 ## Fields
 
