@@ -412,7 +412,7 @@ The file uses version 1 of the current conditions format:
     "warnings": [{ "field": "windBatteryStatus", "message": "Wind sensor battery low" }]
   },
   "archives": { "week": "history-week.json", "year": "history-year.json" },
-  "generator": "weewx-current-json 0.2.0; WeeWX 5.5.2"
+  "generator": "weewx-current-json 0.3.0; WeeWX 5.5.2"
 }
 ```
 

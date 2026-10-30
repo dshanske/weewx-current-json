@@ -1,6 +1,6 @@
 # Changes
 
-## Unreleased
+## 0.3.0
 
 * Adds `history`, each reading over the last 24 hours in half-hour intervals, for charts, set by
   `[[History]]`.
@@ -23,7 +23,7 @@
 * `today` leaves out totals for sensors the station doesn't have, which WeeWX's daily summaries
   gave as 0.
 
-## 0.2.0 (unreleased)
+## 0.2.0
 
 * Adds the National Weather Service forecast and alerts from weewx-nws, if it's installed, as an optional
   `forecast` section: the one-hour forecasts, the twelve-hour periods and the active alerts, set by

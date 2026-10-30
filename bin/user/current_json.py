@@ -63,7 +63,7 @@ import user.current_json_sensors as hardware
 
 log = logging.getLogger(__name__)
 
-VERSION = '0.2.0'
+VERSION = '0.3.0'
 
 FORMAT = 'current-conditions'
 FORMAT_VERSION = 1
