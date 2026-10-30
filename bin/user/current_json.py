@@ -19,6 +19,8 @@ weather provider of the Simple Location WordPress plugin:
       "derived": {"code": "sensors_clouds", "cloudiness": "sensors_clouds", "aqi": "us_epa"},
       "today": {"temperature_max": 24.3, "temperature_max_time": 1761228000, ...},
       "trend": {"hours": 3, "pressure": -1.2, "temperature": 2.4},
+      "almanac": {"sunrise": 1761218383, "sunset": 1761257375, "moon_phase": 1, ...},
+      "history": {"start": 1761145200, "interval": 1800, "temperature": [...], ...},
       "forecast": {"source": "nws", "hourly": [...], "periods": [...], "alerts": [...]}
     }
 
@@ -28,7 +30,9 @@ have are left out. The condition code and cloud cover, which WeeWX doesn't have,
 described in user.current_json_conditions, and "derived" says which source gave each. The air
 quality index, with its category and color, is calculated as described in user.current_json_air,
 and "derived" names its scale. "today" holds the day's extremes and totals so far, and "trend" the
-change over the last few hours. If weewx-nws is installed, "forecast" holds its forecast and
+change over the last few hours. "almanac" holds the day's sun and moon times, as described in
+user.current_json_almanac, and "history" each reading over the last day, as described in
+user.current_json_history. If weewx-nws is installed, "forecast" holds its forecast and
 alerts, as described in user.current_json_forecast; it is optional, and adds to the format without
 changing anything else in it.
 """
@@ -48,8 +52,10 @@ import weewx.xtypes
 from weeutil.weeutil import TimeSpan, archiveDaySpan, to_bool, to_int
 
 import user.current_json_air as air
+import user.current_json_almanac as almanacs
 import user.current_json_conditions as conditions
 import user.current_json_forecast as forecasts
+import user.current_json_history as histories
 
 log = logging.getLogger(__name__)
 
@@ -253,6 +259,9 @@ def station_from_config(config_dict, stn_info=None, timestamp=None):
     url = sloc_dict.get('station_url') or station_dict.get('station_url')
     if url:
         station['url'] = str(url)
+    webcam = sloc_dict.get('webcam_url')
+    if webcam:
+        station['webcam'] = str(webcam)
     text = sloc_dict.get('attribution_text')
     if text:
         attribution = {'text': str(text)}
@@ -314,7 +323,8 @@ def trend(observations, earlier, hours):
 
 
 def build_document(record, station, observations, code=None, source=None, cloudiness=None, cloud_source=None,
-                   air_quality=None, aqi_scale=None, forecast=None, today=None, trend=None):
+                   air_quality=None, aqi_scale=None, forecast=None, today=None, trend=None,
+                   almanac=None, history=None, metar_station=None):
     """Returns the JSON document, as a dict.
 
     Args:
@@ -332,6 +342,12 @@ def build_document(record, station, observations, code=None, source=None, cloudi
             or empty to leave it out.
         today (dict|None): The today section, from today_from_aggregates(), or empty to leave it out.
         trend (dict|None): The trend section, from trend(), or empty to leave it out.
+        almanac (dict|None): The almanac section, from user.current_json_almanac.read_almanac(),
+            or empty to leave it out.
+        history (dict|None): The history section, from user.current_json_history.read_history(),
+            or empty to leave it out.
+        metar_station (str|None): The airport whose METAR gave the condition or the cloud cover,
+            if one did.
     """
     document = {
         'format': FORMAT,
@@ -351,12 +367,18 @@ def build_document(record, station, observations, code=None, source=None, cloudi
     if air_quality and air_quality.get('aqi') is not None:
         document['observations'].update(air_quality)
         derived['aqi'] = aqi_scale
+    if metar_station and 'metar' in derived.values():
+        derived['metar_station'] = metar_station
     if derived:
         document['derived'] = derived
     if today:
         document['today'] = today
     if trend:
         document['trend'] = trend
+    if almanac:
+        document['almanac'] = almanac
+    if history:
+        document['history'] = history
     if forecast:
         document['forecast'] = forecast
     document['generator'] = 'weewx-current-json %s; WeeWX %s' % (VERSION, weewx.__version__)
@@ -447,6 +469,9 @@ class CurrentJSONGenerator(weewx.reportengine.ReportGenerator):
             self.forecast(nws_manager_opener, sloc_dict.get('Forecast', {}), timestamp),
             self.today(manager, sloc_dict.get('Today', {}), timestamp, fields),
             self.trend(manager, sloc_dict.get('Trend', {}), record, observations, fields),
+            self.almanac(sloc_dict.get('Almanac', {}), timestamp),
+            self.history(manager, sloc_dict.get('History', {}), timestamp, fields),
+            sources.metar_station,
         )
         path = os.path.join(self.html_root(), sloc_dict.get('filename', 'current.json'))
         write_atomically(path, document)
@@ -535,6 +560,29 @@ class CurrentJSONGenerator(weewx.reportengine.ReportGenerator):
         if not earlier:
             return None
         return trend(observations, observations_from_record(earlier, fields=fields), hours)
+
+    def almanac(self, almanac_dict, timestamp):
+        """Returns the almanac section, or None if [[Almanac]] disables it or the station has no location."""
+        if not almanacs.enabled(almanac_dict):
+            return None
+        station_dict = self.config_dict.get('Station', {})
+        try:
+            latitude = float(station_dict['latitude'])
+            longitude = float(station_dict['longitude'])
+        except (KeyError, TypeError, ValueError):
+            return None
+        altitude = None
+        if self.stn_info is not None and getattr(self.stn_info, 'altitude_vt', None) is not None:
+            altitude = weewx.units.convert(self.stn_info.altitude_vt, 'meter').value
+        return almanacs.read_almanac(timestamp, latitude, longitude, altitude)
+
+    @staticmethod
+    def history(manager, history_dict, timestamp, fields):
+        """Returns the history section, or None if [[History]] sets hours to 0."""
+        options = histories.options_from_config(history_dict)
+        if options is None:
+            return None
+        return histories.read_history(manager, timestamp, fields, precision=PRECISION, **options)
 
     @staticmethod
     def forecast(nws_manager_opener, forecast_dict, timestamp):

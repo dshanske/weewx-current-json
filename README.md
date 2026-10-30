@@ -48,6 +48,7 @@ Everything has a default; the installer writes the options into `weewx.conf` com
     attribution_url = ""               # "Weather from Backyard Weather". Empty for none.
     user_agent = ""                    # Sent to aviationweather.gov; please include a contact.
     timezone = ""                      # Default: the computer's, such as America/New_York.
+    webcam_url = ""                    # An image from the station's webcam. Empty for none.
 
     [[Conditions]]
         sources = sensors_precipitation, sensors_air, metar, sensors_clouds, sensors_wind, nws
@@ -68,6 +69,13 @@ Everything has a default; the installer writes the options into `weewx.conf` com
 
     [[Trend]]
         hours = 3                      # 0 for no trend.
+
+    [[History]]
+        hours = 24                     # 0 for no history.
+        interval = 30                  # Minutes summarized in each value.
+
+    [[Almanac]]
+        enable = true                  # Sun and moon times.
 
     [[Forecast]]
         enable = true                  # Only does anything with weewx-nws installed.
@@ -184,6 +192,28 @@ station's, in WeeWX's local time. Set `enable = false` in `[[Today]]` to leave i
 default), from the archive record nearest that time. It's left out when there's no such record,
 such as in the first hours after a station starts, and with `hours = 0` in `[[Trend]]`.
 
+## History
+
+`history` has each reading over the last `hours` (24 by default), summarized over intervals of
+`interval` minutes (30), so that apps can chart the day: the total rain and snow of each interval,
+the highest gust, rain rate and snow rate, and the mean of everything else. It's read from the
+archive in one query. Set `hours = 0` in `[[History]]` to leave it out.
+
+## Almanac
+
+`almanac` has the day's sunrise and sunset and the moon's phase, from WeeWX's almanac, at the
+station's location. If [PyEphem](https://rhodesmill.org/pyephem/) is installed with WeeWX
+(`pip install ephem` in WeeWX's environment), it also has civil dawn and dusk, moonrise and
+moonset, and the next full and new moon. Set `enable = false` in `[[Almanac]]` to leave it out. It
+needs the station's latitude and longitude in `[Station]`.
+
+## Webcam
+
+If the station has a webcam that saves an image to a web address, set `webcam_url` to it, and the
+file gives it as `station.webcam`, for apps to show and reload. It can be relative to where
+`current.json` is published, such as `webcam.jpg`. The extension only passes the address on; it
+doesn't fetch or check the image.
+
 ## Time zone
 
 The station's time zone is in `station.timezone`, as an IANA name such as `America/New_York`, so
@@ -226,7 +256,8 @@ The file uses version 1 of the current conditions format:
     "url": "https://weather.example.com/",
     "attribution": { "text": "Weather from Backyard Weather", "url": "https://weather.example.com/" },
     "timezone": "America/New_York",
-    "utc_offset": -14400
+    "utc_offset": -14400,
+    "webcam": "https://weather.example.com/webcam.jpg"
   },
   "observations": {
     "temperature": 21.5,
@@ -258,6 +289,24 @@ The file uses version 1 of the current conditions format:
     "rain": 3.05
   },
   "trend": { "hours": 3, "pressure": -1.2, "temperature": 4.6 },
+  "almanac": {
+    "sunrise": 1761218383,
+    "sunset": 1761257375,
+    "civil_dawn": 1761216697,
+    "civil_dusk": 1761259060,
+    "moonrise": 1761226268,
+    "moonset": 1761260206,
+    "moon_phase": 1,
+    "moon_fullness": 4,
+    "next_full_moon": 1762348755,
+    "next_new_moon": 1763621233
+  },
+  "history": {
+    "start": 1761145200,
+    "interval": 1800,
+    "temperature": [12.1, 11.8, 11.6, "...", 21.3, 21.5],
+    "rain": [0.0, 0.0, 0.0, "...", 0.25, 1.02]
+  },
   "generator": "weewx-current-json 0.2.0; WeeWX 5.5.2"
 }
 ```
@@ -294,10 +343,20 @@ The file uses version 1 of the current conditions format:
   Unix time of each, and `rain` and `snow`, the totals since midnight in mm. Anything the station
   doesn't measure is left out.
 * `trend` gives the change of `pressure` and `temperature`, in hPa and °C, over the last `hours`.
+* `almanac` times are Unix seconds. `moon_phase` is 0 to 7: new, waxing crescent, first quarter,
+  waxing gibbous, full, waning gibbous, last quarter and waning crescent. `moon_fullness` is the
+  percentage of the moon that's lit. A sunrise or sunset that doesn't happen that day, near the
+  poles, is left out, and so is anything that needs PyEphem without it.
+* `history` has a list for each reading, one value per interval, oldest first, in the units of the
+  observations, with `null` for an interval without data. `start` is when the first interval
+  begins, in Unix seconds, and `interval` the length of each in seconds; the last is the interval
+  `time` is in, so it may not have ended. The wind direction isn't included.
+* `station.webcam` is the address of the station's webcam image, as `webcam_url` gives it.
 * `forecast`, only with weewx-nws, is described [below](#the-forecast-section).
 * `code` is an OpenWeatherMap-style condition code (800 clear, 801–804 increasing cloud, 500–504
   rain, 600–602 snow, 701 mist, 741 fog, 200–233 thunderstorm, 400 windy), and `derived.code` names
-  the source it came from.
+  the source it came from. When it's `metar`, or `derived.cloudiness` is, `derived.metar_station`
+  is the airport's ICAO ID, such as `KPHL`.
 
 ### The forecast section
 
