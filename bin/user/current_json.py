@@ -16,7 +16,7 @@ weather provider of the Simple Location WordPress plugin:
       "units": "metric",
       "station": {"id": "...", "name": "...", "latitude": ..., "longitude": ..., "altitude": ...},
       "observations": {"temperature": 21.5, "humidity": 60, ...},
-      "derived": {"code": "sensors_clouds", "cloudiness": "sensors_clouds", "aqi": "us_epa"},
+      "derived": {"code": "sensorsclouds", "cloudiness": "sensorsclouds", "aqi": "us_epa"},
       "today": {"temperature_max": 24.3, "temperature_max_time": 1761228000, ...},
       "trend": {"hours": 3, "pressure": -1.2, "temperature": 2.4},
       "almanac": {"sunrise": 1761218383, "sunset": 1761257375, "moon_phase": 1, ...},
@@ -53,9 +53,13 @@ from weeutil.weeutil import TimeSpan, archiveDaySpan, to_bool, to_int
 
 import user.current_json_air as air
 import user.current_json_almanac as almanacs
+import user.current_json_archives as archive_files
 import user.current_json_conditions as conditions
 import user.current_json_forecast as forecasts
 import user.current_json_history as histories
+import user.current_json_rain as rains
+import user.current_json_records as periods
+import user.current_json_sensors as hardware
 
 log = logging.getLogger(__name__)
 
@@ -73,6 +77,10 @@ OBSERVATIONS = {
     'dewpoint': 'dewpoint',
     'heatindex': 'heatindex',
     'windchill': 'windchill',
+    # WeeWX's apparent temperature, from temperature, humidity and wind, and its estimate of the
+    # height of the cloud base, in meters, from the temperature and dewpoint.
+    'appTemp': 'apptemp',
+    'cloudbase': 'cloudbase',
     'barometer': 'pressure',
     'windSpeed': 'windspeed',
     'windDir': 'winddegree',
@@ -107,6 +115,10 @@ PRECISION = {
     'illuminance': 0,
     'voc_index': 0,
     'nox_index': 0,
+    'cloudbase': 0,
+    'lightning_strikes': 0,
+    'apptemp': 1,
+    'lightning_distance': 1,
     'temperature': 1,
     'dewpoint': 1,
     'heatindex': 1,
@@ -169,7 +181,7 @@ def observations_from_record(record, hour_rain_mm=None, fields=None, hour_snow_m
     return observations
 
 
-# The keys of the "today" section: (key, file key it's of, aggregate), all from the day so far.
+# The extremes of "today", "yesterday" and each period of "records": (key, file key it's of, aggregate).
 TODAY = (
     ('temperature_max', 'temperature', 'max'),
     ('temperature_max_time', 'temperature', 'maxtime'),
@@ -177,6 +189,15 @@ TODAY = (
     ('temperature_min_time', 'temperature', 'mintime'),
     ('windgust_max', 'windgust', 'max'),
     ('windgust_max_time', 'windgust', 'maxtime'),
+)
+
+# Their totals: (key, WeeWX field, unit, decimal places).
+TOTALS = (
+    ('rain', 'rain', 'mm', 2),
+    ('snow', 'snow', 'mm', 2),
+    ('et', 'ET', 'mm', 2),
+    ('windrun', 'windrun', 'km', 1),
+    ('lightning_strikes', 'lightning_strike_count', None, 0),
 )
 
 # The file keys "trend" gives the change of.
@@ -280,6 +301,8 @@ def station_from_config(config_dict, stn_info=None, timestamp=None):
 def today_from_aggregates(aggregate, fields):
     """Returns the "today" section: the day's extremes and totals so far, in the file's units.
 
+    The same summary, over other spans, makes "yesterday" and each period of "records".
+
     Args:
         aggregate (callable): Called with a WeeWX field and an aggregate, such as 'max' or 'sum',
             returns the aggregate over the day so far as a ValueTuple, or None.
@@ -300,10 +323,18 @@ def today_from_aggregates(aggregate, fields):
             if unit and value.unit:
                 value = weewx.units.convert(value, unit)
             today[key] = round(float(value.value), PRECISION.get(file_key, 2))
-    for key in ('rain', 'snow'):
-        value = aggregate(key, 'sum')
-        if value is not None and value.value is not None:
-            today[key] = round(float(weewx.units.convert(value, 'mm').value), 2)
+    for key, name, unit, places in TOTALS:
+        # WeeWX's daily summaries sum to 0 without any readings, which would claim a sensor the
+        # station doesn't have.
+        count = aggregate(name, 'count')
+        if count is None or not count.value:
+            continue
+        value = aggregate(name, 'sum')
+        if value is None or value.value is None:
+            continue
+        if unit and value.unit:
+            value = weewx.units.convert(value, unit)
+        today[key] = int(round(value.value)) if places == 0 else round(float(value.value), places)
     return today
 
 
@@ -324,7 +355,8 @@ def trend(observations, earlier, hours):
 
 def build_document(record, station, observations, code=None, source=None, cloudiness=None, cloud_source=None,
                    air_quality=None, aqi_scale=None, forecast=None, today=None, trend=None,
-                   almanac=None, history=None, metar_station=None):
+                   almanac=None, history=None, metar_station=None, *, yesterday=None, records=None,
+                   rain=None, indoor=None, sensors=None, health=None, archives=None):
     """Returns the JSON document, as a dict.
 
     Args:
@@ -348,6 +380,10 @@ def build_document(record, station, observations, code=None, source=None, cloudi
             or empty to leave it out.
         metar_station (str|None): The airport whose METAR gave the condition or the cloud cover,
             if one did.
+        yesterday, records, rain, indoor, sensors, health (dict|list|None): The sections of the
+            same names, from user.current_json_records, user.current_json_rain and
+            user.current_json_sensors, or empty to leave them out.
+        archives (dict|None): The archive files' names, from user.current_json_archives.
     """
     document = {
         'format': FORMAT,
@@ -371,14 +407,11 @@ def build_document(record, station, observations, code=None, source=None, cloudi
         derived['metar_station'] = metar_station
     if derived:
         document['derived'] = derived
-    if today:
-        document['today'] = today
-    if trend:
-        document['trend'] = trend
-    if almanac:
-        document['almanac'] = almanac
-    if history:
-        document['history'] = history
+    for key, section in (('today', today), ('yesterday', yesterday), ('records', records), ('trend', trend),
+                         ('rain', rain), ('almanac', almanac), ('indoor', indoor), ('sensors', sensors),
+                         ('health', health), ('history', history), ('archives', archives)):
+        if section:
+            document[key] = section
     if forecast:
         document['forecast'] = forecast
     document['generator'] = 'weewx-current-json %s; WeeWX %s' % (VERSION, weewx.__version__)
@@ -426,6 +459,7 @@ class CurrentJSONGenerator(weewx.reportengine.ReportGenerator):
             fields,
             self.hour_total(manager, 'snow', timestamp),
         )
+        observations.update(self.lightning(manager, timestamp))
 
         user_agent = sloc_dict.get('user_agent') or ('weewx-current-json/%s' % VERSION)
         nws_manager_opener = self.nws_manager_opener()
@@ -456,9 +490,15 @@ class CurrentJSONGenerator(weewx.reportengine.ReportGenerator):
             pm2_5_field = next((name for name, key in fields.items() if key == 'pm2_5'), None)
             air_quality = air.air_quality(aqi_scale, observations.get('pm2_5'), self.hourly_means(manager, pm2_5_field, timestamp))
 
+        station = station_from_config(self.config_dict, self.stn_info, timestamp)
+        root = self.html_root()
+        indoor_on, extra_on, sensor_names = hardware.sensor_options(sloc_dict.get('Sensors', {}))
+        archive_names = archive_files.options_from_config(sloc_dict.get('Archives', {}))
+        written = archive_files.write_archives(manager, timestamp, fields, station['id'], archive_names, root,
+                                          PRECISION, write_atomically) if archive_names else None
         document = build_document(
             record,
-            station_from_config(self.config_dict, self.stn_info, timestamp),
+            station,
             observations,
             code,
             source,
@@ -472,8 +512,15 @@ class CurrentJSONGenerator(weewx.reportengine.ReportGenerator):
             self.almanac(sloc_dict.get('Almanac', {}), timestamp),
             self.history(manager, sloc_dict.get('History', {}), timestamp, fields),
             sources.metar_station,
+            yesterday=self.yesterday(manager, sloc_dict.get('Today', {}), timestamp, fields),
+            records=self.records(manager, sloc_dict.get('Records', {}), timestamp, fields),
+            rain=self.rain(manager, sloc_dict.get('Rain', {}), timestamp),
+            indoor=hardware.indoor(record) if indoor_on else None,
+            sensors=hardware.extra(record, sensor_names) if extra_on else None,
+            health=hardware.health(record, sloc_dict.get('Health', {})),
+            archives=written,
         )
-        path = os.path.join(self.html_root(), sloc_dict.get('filename', 'current.json'))
+        path = os.path.join(root, sloc_dict.get('filename', 'current.json'))
         write_atomically(path, document)
         log.info("Wrote %s in %.2f seconds", path, time.time() - start)
 
@@ -533,20 +580,79 @@ class CurrentJSONGenerator(weewx.reportengine.ReportGenerator):
         return means
 
     @staticmethod
-    def today(manager, today_dict, timestamp, fields):
+    def summarize(manager, span, fields):
+        """Returns the extremes and totals over a span, like "today"."""
+        def aggregate(field, aggregate_type):
+            try:
+                return weewx.xtypes.get_aggregate(field, span, aggregate_type, manager)
+            except (weewx.UnknownType, weewx.UnknownAggregation, weewx.CannotCalculate):
+                return None
+
+        return today_from_aggregates(aggregate, fields)
+
+    def degree_day_bases(self):
+        return periods.degree_day_bases(self.config_dict)
+
+    def today(self, manager, today_dict, timestamp, fields):
         """Returns the today section, or None if [[Today]] disables it."""
         if not to_bool((today_dict or {}).get('enable', True)):
             return None
         span = archiveDaySpan(timestamp)
-        span = TimeSpan(span.start, timestamp)
+        today = self.summarize(manager, TimeSpan(span.start, timestamp), fields)
+        today.update(periods.degree_days(manager, span, self.degree_day_bases()))
+        return today
 
-        def aggregate(field, aggregate_type):
-            try:
-                return weewx.xtypes.get_aggregate(field, span, aggregate_type, manager)
-            except (weewx.UnknownType, weewx.UnknownAggregation):
-                return None
+    def yesterday(self, manager, today_dict, timestamp, fields):
+        """Returns the yesterday section, or None if [[Today]] disables it, or its yesterday option does."""
+        today_dict = today_dict or {}
+        if not to_bool(today_dict.get('enable', True)) or not to_bool(today_dict.get('yesterday', True)):
+            return None
+        span = archiveDaySpan(timestamp, days_ago=1)
+        summary = self.summarize(manager, span, fields)
+        summary.update(periods.degree_days(manager, span, self.degree_day_bases()))
+        return summary
 
-        return today_from_aggregates(aggregate, fields)
+    def records(self, manager, records_dict, timestamp, fields):
+        """Returns the records section, or None if [[Records]] disables it."""
+        chosen = periods.options_from_config(records_dict)
+        if not chosen:
+            return None
+        week_start, rain_year_start = periods.station_options(self.config_dict)
+        spans = periods.period_spans(timestamp, chosen, manager.firstGoodStamp(), week_start, rain_year_start)
+        return periods.read_records(lambda span: self.summarize(manager, span, fields), spans, manager,
+                                    self.degree_day_bases())
+
+    @staticmethod
+    def rain(manager, rain_dict, timestamp):
+        """Returns the rain section, or None if [[Rain]] disables it."""
+        options = rains.options_from_config(rain_dict)
+        if options is None:
+            return None
+        return rains.read_rain(manager, timestamp, **options)
+
+    @staticmethod
+    def lightning(manager, timestamp):
+        """Returns the strikes in the last hour and, if there were any, the distance of the latest, in km."""
+        if 'lightning_strike_count' not in manager.sqlkeys:
+            return {}
+        try:
+            total = weewx.xtypes.get_aggregate('lightning_strike_count', TimeSpan(timestamp - 3600, timestamp), 'sum',
+                                               manager)
+        except (weewx.UnknownType, weewx.UnknownAggregation):
+            return {}
+        if total is None or total.value is None:
+            return {}
+        lightning = {'lightning_strikes': int(round(total.value))}
+        if lightning['lightning_strikes'] and 'lightning_distance' in manager.sqlkeys:
+            row = manager.getSql(
+                'SELECT lightning_distance, usUnits FROM %s WHERE dateTime > ? AND dateTime <= ? '
+                'AND lightning_distance IS NOT NULL ORDER BY dateTime DESC LIMIT 1' % manager.table_name,
+                (timestamp - 3600, timestamp))
+            if row:
+                unit, group = weewx.units.getStandardUnitType(row[1], 'lightning_distance')
+                km = weewx.units.convert(weewx.units.ValueTuple(row[0], unit, group), 'km').value
+                lightning['lightning_distance'] = round(km, 1)
+        return lightning
 
     @staticmethod
     def trend(manager, trend_dict, record, observations, fields):
