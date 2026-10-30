@@ -169,8 +169,11 @@ class TestTodayAndTrend(unittest.TestCase):
             ('outTemp', 'min'): weewx.units.ValueTuple(50.0, 'degree_F', 'group_temperature'),
             ('outTemp', 'mintime'): weewx.units.ValueTuple(1761210000, 'unix_epoch', 'group_time'),
             ('windGust', 'max'): weewx.units.ValueTuple(22.0, 'mile_per_hour', 'group_speed'),
+            ('rain', 'count'): weewx.units.ValueTuple(12, 'count', 'group_count'),
             ('rain', 'sum'): weewx.units.ValueTuple(0.5, 'inch', 'group_rain'),
-            ('snow', 'sum'): weewx.units.ValueTuple(None, 'inch', 'group_rain'),
+            # As the daily summaries give it for a station without a snow sensor.
+            ('snow', 'count'): weewx.units.ValueTuple(0, 'count', 'group_count'),
+            ('snow', 'sum'): weewx.units.ValueTuple(0.0, 'inch', 'group_rain'),
         }
         today = sl.today_from_aggregates(lambda field, agg: values.get((field, agg)), sl.OBSERVATIONS)
         self.assertEqual({
