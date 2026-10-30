@@ -219,6 +219,12 @@ class TestDocument(unittest.TestCase):
         self.assertEqual({'cloudiness': 0}, document['observations'])
         self.assertEqual({'cloudiness': 'metar'}, document['derived'])
 
+    def test_document_metar_station(self):
+        document = sl.build_document(RECORD, {'id': 'weewx'}, {}, 801, 'metar', 20, 'sensors_clouds', metar_station='KPHL')
+        self.assertEqual({'code': 'metar', 'cloudiness': 'sensors_clouds', 'metar_station': 'KPHL'}, document['derived'])
+        document = sl.build_document(RECORD, {'id': 'weewx'}, {}, 801, 'sensors_clouds', metar_station='KPHL')
+        self.assertEqual({'code': 'sensors_clouds'}, document['derived'], 'Only named when its METAR was used.')
+
     def test_write_atomically(self):
         directory = tempfile.mkdtemp()
         try:
@@ -377,6 +383,33 @@ class TestGenerator(unittest.TestCase):
         self.assertEqual({'hours': 3, 'pressure': -2.1, 'temperature': 2.5}, self.run_generator()['trend'])
         self.config['CurrentJSON']['Trend'] = {'hours': '0'}
         self.assertNotIn('trend', self.run_generator())
+
+    def test_history(self):
+        history = self.run_generator()['history']
+        self.assertEqual(1800, history['interval'])
+        self.assertEqual(48, len(history['temperature']))
+        # The setUp records cover the last two half hours; the last two have the rain.
+        self.assertEqual([21.5, 21.5], history['temperature'][-2:])
+        self.assertEqual([0.0, 2.54], history['rain'][-2:])
+        self.assertIsNone(history['temperature'][0])
+        self.config['CurrentJSON']['History'] = {'hours': '0'}
+        self.assertNotIn('history', self.run_generator())
+
+    def test_almanac(self):
+        almanac = self.run_generator()['almanac']
+        self.assertLess(almanac['sunrise'], RECORD['dateTime'])
+        self.assertGreater(almanac['sunset'], RECORD['dateTime'])
+        self.assertIn('moon_phase', almanac)
+        self.config['CurrentJSON']['Almanac'] = {'enable': 'false'}
+        self.assertNotIn('almanac', self.run_generator())
+
+    def test_no_almanac_without_location(self):
+        del self.config['Station']['latitude']
+        self.assertNotIn('almanac', self.run_generator())
+
+    def test_webcam(self):
+        self.config['CurrentJSON']['webcam_url'] = 'https://weather.example.com/webcam.jpg'
+        self.assertEqual('https://weather.example.com/webcam.jpg', self.run_generator()['station']['webcam'])
 
     def test_today_disabled(self):
         self.config['CurrentJSON']['Today'] = {'enable': 'false'}

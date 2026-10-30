@@ -47,6 +47,10 @@ CONFIG = """
     # computer's, which WeeWX works in; set it only if the file doesn't have one.
     #timezone = ""
 
+    # Address of an image from a webcam at the station, which apps can show and reload. A
+    # relative address is taken from where this file is published.
+    #webcam_url = ""
+
     [[Conditions]]
         # WeeWX doesn't know the conditions, such as "rain" or "partly cloudy", so they are
         # derived from these sources, tried in order; the first that gives one is used.
@@ -95,6 +99,17 @@ CONFIG = """
         # Hours over which to give the change of pressure and temperature. 0 for none.
         #hours = 3
 
+    [[History]]
+        # Each reading over the last hours, summarized each interval minutes, for charts.
+        # 0 hours for none.
+        #hours = 24
+        #interval = 30
+
+    [[Almanac]]
+        # Sunrise, sunset and the moon phase; with PyEphem installed, also twilight,
+        # moonrise, moonset and the next full and new moon.
+        #enable = true
+
     [[Forecast]]
         # If weewx-nws is installed, its NWS forecast and alerts are added to the file. Set
         # enable to false to leave them out.
@@ -129,7 +144,8 @@ class CurrentJSONInstaller(ExtensionInstaller):
             config=configobj.ConfigObj(StringIO(CONFIG)),
             files=[
                 ('bin/user', ['bin/user/current_json.py', 'bin/user/current_json_air.py', 'bin/user/current_json_conditions.py',
-                              'bin/user/current_json_forecast.py']),
+                              'bin/user/current_json_forecast.py', 'bin/user/current_json_history.py',
+                              'bin/user/current_json_almanac.py']),
                 ('skins/CurrentJSON', ['skins/CurrentJSON/skin.conf']),
             ],
         )

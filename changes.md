@@ -1,5 +1,14 @@
 # Changes
 
+## Unreleased
+
+* Adds `history`, each reading over the last 24 hours in half-hour intervals, for charts, set by
+  `[[History]]`.
+* Adds `almanac`, the day's sunrise, sunset and moon phase from WeeWX's almanac, and with PyEphem,
+  civil twilight, moonrise, moonset and the next full and new moon, set by `[[Almanac]]`.
+* Adds `webcam_url`, an image from the station's webcam, as `station.webcam`.
+* Names the airport in `derived.metar_station` when its METAR gave the condition or cloud cover.
+
 ## 0.2.0 (unreleased)
 
 * Adds the National Weather Service forecast and alerts from weewx-nws, if it's installed, as an optional
