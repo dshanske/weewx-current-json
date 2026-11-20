@@ -37,6 +37,9 @@ import urllib.request
 
 log = logging.getLogger(__name__)
 
+# Minutes after which a METAR is too old to use.
+DEFAULT_METAR_MAX_AGE = 90.0
+
 # Sources, in the default order: measured or observed before forecast.
 DEFAULT_SOURCES = ['sensors_precipitation', 'sensors_air', 'metar', 'sensors_clouds', 'sensors_wind', 'nws']
 
@@ -122,9 +125,9 @@ NWS_ICONS = {
     'rain': 503,
     'rain_showers': 521,
     'rain_showers_hi': 521,
-    'tsra': 211,
-    'tsra_sct': 211,
-    'tsra_hi': 211,
+    'tsra': 201,
+    'tsra_sct': 201,
+    'tsra_hi': 201,
     'tornado': 781,
     'hurricane': 782,
     'tropical_storm': 782,
@@ -134,6 +137,16 @@ NWS_ICONS = {
     'blizzard': 622,
     'fog': 741,
 }
+
+
+def number_option(section, key, default):
+    """Returns a number from a config section, or the default, logging an error, if it isn't one."""
+    value = (section or {}).get(key, default)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        log.error("Ignoring %s = %r: not a number; using %s", key, value, default)
+        return float(default)
 
 
 def thresholds_from_config(conditions_dict):
@@ -183,6 +196,13 @@ def _number(observations, key):
     return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
 
 
+def _falling(rate, hour_total):
+    """Whether rain or snow is falling: by its rate if the station has one, else by the hour's total."""
+    if rate is not None:
+        return rate > 0
+    return hour_total is not None and hour_total > 0
+
+
 def from_sensors_precipitation(observations, thresholds, lightning_count=None):
     """Thunderstorms, rain, snow and fog from the station's sensors.
 
@@ -198,10 +218,13 @@ def from_sensors_precipitation(observations, thresholds, lightning_count=None):
     rate = _number(observations, 'rainrate')
     rain = _number(observations, 'rain')
     temperature = _number(observations, 'temperature')
-    raining = (rate is not None and rate > 0) or (rain is not None and rain > 0)
+    # A rate is over the last few minutes (WeeWX's rainRate over 15 by default), so a station that
+    # has one isn't raining at a rate of 0, whatever fell earlier in the hour. Without a rate, the
+    # last hour's total is all there is.
+    raining = _falling(rate, rain)
     snow_rate = _number(observations, 'snowrate')
     snow = _number(observations, 'snow')
-    snowing = (snow_rate is not None and snow_rate > 0) or (snow is not None and snow > 0)
+    snowing = _falling(snow_rate, snow)
 
     if lightning_count is not None and lightning_count > 0:
         return 201 if (raining or snowing) else 211
@@ -311,9 +334,17 @@ def metar_weather_code(wx_string):
             continue
         code = None
         if 'TS' in body:
-            code = 201 if ('RA' in body or 'SH' in body) else 211
-        elif 'FZRA' in body or 'FZDZ' in body:
+            if 'GR' in body or 'GS' in body:
+                code = 233
+            else:
+                code = 201 if ('RA' in body or 'SH' in body) else 211
+        elif 'FZRA' in body:
             code = 511
+        elif 'FZDZ' in body:
+            code = 309
+        elif body.startswith(('BL', 'DR')) and ('SN' in body or 'SA' in body or 'DU' in body):
+            # Blowing or drifting snow, sand or dust is picked up by the wind, not falling.
+            code = 761 if ('SA' in body or 'DU' in body) else 400
         elif 'GR' in body or 'GS' in body:
             code = 624
         elif 'SN' in body and 'RA' in body:
@@ -493,7 +524,7 @@ class ConditionSources:
         self.cloud_sources = sources_from_config(conditions_dict, 'cloud_sources', DEFAULT_CLOUD_SOURCES)
         self.thresholds = thresholds_from_config(conditions_dict)
         self.metar_station = str(conditions_dict.get('metar_station', '')).strip().upper()
-        self.metar_max_age = float(conditions_dict.get('metar_max_age', 90))
+        self.metar_max_age = number_option(conditions_dict, 'metar_max_age', DEFAULT_METAR_MAX_AGE)
         self.user_agent = user_agent
         self.metar_fetcher = metar_fetcher
         self.nws_manager_opener = nws_manager_opener

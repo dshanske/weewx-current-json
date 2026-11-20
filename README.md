@@ -122,7 +122,7 @@ used, and the file says which one did. Remove a source from the list to skip it.
 
 | Source | From | Gives |
 |---|---|---|
-| `sensors_precipitation` | Your lightning sensor, rain gauge, snow sensor, temperature, humidity and dewpoint | Thunderstorm when lightning was detected this interval; snow when a snow sensor measures falling snow (rain and snow if it is also raining above 0 °C); otherwise snow at or below 0 °C, rain and snow below 2 °C, otherwise light, moderate or heavy rain by rain rate; fog or mist when the air is calm and saturated |
+| `sensors_precipitation` | Your lightning sensor, rain gauge, snow sensor, temperature, humidity and dewpoint | Thunderstorm when lightning was detected this interval; snow when a snow sensor measures falling snow (rain and snow if it is also raining above 0 °C); otherwise snow at or below 0 °C, rain and snow below 2 °C, otherwise light, moderate or heavy rain by rain rate. With a rain (or snow) rate, it's falling only while the rate is above 0; without one, while the last hour's total is; fog or mist when the air is calm and saturated |
 | `sensors_air` | Your PM2.5 sensor, and a gas sensor's VOC index if you have one | Smoke when PM2.5 and the VOC index are both raised; haze when PM2.5 is raised in dry air without the VOCs. Before the sunlight, so a smoky sky isn't reported as just cloudy. |
 | `metar` | The latest METAR of the airport in `metar_station`, from [aviationweather.gov](https://aviationweather.gov) | The reported weather (rain, snow, thunderstorm, fog…) or sky cover. Used only if no more than `metar_max_age` minutes old. Fetched at most once each time the file is written, and only when a source before it, for the condition or the cloud cover, gave nothing. |
 | `sensors_clouds` | Your solar radiation sensor, compared with WeeWX's clear-sky maximum (`maxSolarRad`); without one, your illuminance (lux) sensor, at about 120 lux per W/m² | Clear, few, scattered, broken or overcast, in daytime only |
@@ -299,7 +299,8 @@ The station's time zone is in `station.timezone`, as an IANA name such as `Ameri
 that whatever reads the file can show times in the station's time, wherever it is. WeeWX works in
 the computer's local time, so the extension finds the computer's zone, from `TZ`, `/etc/timezone`
 or `/etc/localtime`. If it can't, the name is left out; set `timezone` in `[CurrentJSON]` to give
-it, which should be the computer's zone. `station.utc_offset` is the offset from UTC, in seconds, at
+it, which should be the computer's zone. A name that isn't a known IANA zone is ignored, with an
+error in the log. `station.utc_offset` is the offset from UTC, in seconds, at
 the time of the reading, for readers without a time zone database.
 
 ## Forecast
@@ -483,7 +484,8 @@ With `[[Sensors]]` turned on, it also has:
 * `station.webcam` is the address of the station's webcam image, as `webcam_url` gives it.
 * `forecast`, only with weewx-nws, is described [below](#the-forecast-section).
 * `code` is an OpenWeatherMap-style condition code (800 clear, 801–804 increasing cloud, 500–504
-  rain, 600–602 snow, 701 mist, 741 fog, 200–233 thunderstorm, 400 windy), and `derived.code` names
+  rain, 309 freezing drizzle, 511 freezing rain, 600–602 snow, 701 mist, 741 fog, 200–233
+  thunderstorm, 233 with hail, 400 windy), and `derived.code` names
   the source it came from. When it's `metar`, or `derived.cloudiness` is, `derived.metar_station`
   is the airport's ICAO ID, such as `KPHL`.
 

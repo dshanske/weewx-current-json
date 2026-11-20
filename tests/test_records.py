@@ -119,6 +119,9 @@ class TestRain(DatabaseTest):
 
     def test_options(self):
         self.assertEqual({'storm_gap': 12 * HOUR}, rn.options_from_config({'storm_gap': '12'}))
+        for bad in ('none', '', 'a day'):
+            with self.assertLogs('user.current_json_conditions', 'ERROR'):
+                self.assertEqual({'storm_gap': 24 * HOUR}, rn.options_from_config({'storm_gap': bad}), bad)
         self.assertIsNone(rn.options_from_config({'enable': 'false'}))
 
 
@@ -155,6 +158,11 @@ class TestSensors(unittest.TestCase):
     def test_level_battery_that_is_fine(self):
         health = sn.health(dict(RECORD, batteryStatus1=4.0), {'Batteries': {'batteryStatus1': 'level'}})
         self.assertNotIn('warnings', health)
+
+    def test_bad_weak_signal(self):
+        with self.assertLogs('user.current_json_conditions', 'ERROR'):
+            health = sn.health(dict(RECORD, rxCheckPercent=40.0), {'weak_signal': 'none'})
+        self.assertEqual(['rxCheckPercent'], [w['field'] for w in health['warnings']], 'The default, 50%.')
 
     def test_no_health_readings(self):
         self.assertEqual({}, sn.health(RECORD))

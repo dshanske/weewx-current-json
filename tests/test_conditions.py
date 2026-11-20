@@ -68,6 +68,14 @@ class TestPrecipitation(unittest.TestCase):
     def test_nothing(self):
         self.assertIsNone(c.from_sensors_precipitation({'temperature': 20, 'humidity': 50, 'rainrate': 0, 'rain': 0}, T))
         self.assertIsNone(c.from_sensors_precipitation({}, T))
+
+    def test_rate_says_whether_it_is_falling(self):
+        # Rain earlier in the hour, but none falling now.
+        self.assertIsNone(c.from_sensors_precipitation({'temperature': 15, 'rainrate': 0, 'rain': 0.2}, T))
+        self.assertIsNone(c.from_sensors_precipitation({'temperature': -3, 'snowrate': 0, 'snow': 2}, T))
+        # Without a rate, the hour's total still counts.
+        self.assertEqual(500, c.from_sensors_precipitation({'temperature': 15, 'rain': 0.2}, T))
+        self.assertEqual(601, c.from_sensors_precipitation({'snow': 2}, T))
         self.assertIsNone(c.from_sensors_precipitation({'temperature': 'warm'}, T))
 
 
@@ -111,6 +119,13 @@ class TestMetar(unittest.TestCase):
             '+SN': 602,
             'RASN': 616,
             'FZRA': 511,
+            'FZDZ': 309,
+            'TSGR': 233,
+            '+TSGS': 233,
+            'BLSN': 400,
+            'DRSN': 400,
+            'BLDU': 761,
+            '-SN BLSN': 600,
             'BR': 701,
             'FG': 741,
             'HZ': 721,
@@ -155,7 +170,7 @@ class TestNws(unittest.TestCase):
     def test_icon_codes(self):
         self.assertEqual(802, c.nws_icon_code('https://api.weather.gov/icons/land/day/sct?size=small'))
         self.assertEqual(800, c.nws_icon_code('https://api.weather.gov/icons/land/night/skc,10?size=medium'))
-        self.assertEqual(211, c.nws_icon_code('https://api.weather.gov/icons/land/night/tsra_sct,40/rain,60?size=small'))
+        self.assertEqual(201, c.nws_icon_code('https://api.weather.gov/icons/land/night/tsra_sct,40/rain,60?size=small'))
         self.assertEqual(521, c.nws_icon_code('https://api.weather.gov/icons/land/day/rain_showers,30'))
         self.assertIsNone(c.nws_icon_code('https://api.weather.gov/icons/land/night/unknown?size=medium'))
         self.assertIsNone(c.nws_icon_code(''))
@@ -188,6 +203,11 @@ class TestSources(unittest.TestCase):
         self.assertEqual((503, 'sensors_precipitation'), sources.condition({'rainrate': 3, 'temperature': 15}, 0, radiation=800, max_solar_radiation=900))
         self.assertEqual((800, 'sensors_clouds'), sources.condition({'temperature': 15}, 0, radiation=800, max_solar_radiation=900))
         self.assertEqual((None, None), sources.condition({'temperature': 15}, 0))
+
+    def test_bad_metar_max_age(self):
+        with self.assertLogs('user.current_json_conditions', 'ERROR'):
+            sources = c.ConditionSources({'metar_max_age': '90m'}, 'test')
+        self.assertEqual(c.DEFAULT_METAR_MAX_AGE, sources.metar_max_age)
 
     def test_metar_source(self):
         calls = []
