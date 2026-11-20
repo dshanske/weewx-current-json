@@ -502,7 +502,7 @@ With `[[Sensors]]` turned on, it also has:
   ],
   "periods": [
     { "name": "Tonight", "time": 1761231600, "end": 1761274800, "daytime": false, "temperature": 12.8,
-      "windspeed": 2.24, "windspeed_max": 4.47, "winddegree": 180, "pop": 60, "code": 211,
+      "windspeed": 2.24, "windspeed_max": 4.47, "winddegree": 180, "pop": 60, "code": 201,
       "summary": "Chance Showers And Thunderstorms", "details": "Showers likely after 2am. ..." }
   ],
   "alerts": [
