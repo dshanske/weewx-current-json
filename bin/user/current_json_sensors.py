@@ -35,7 +35,9 @@ at 1 or less, or "none" to never warn about it.
 import logging
 
 import weewx.units
-from weeutil.weeutil import to_bool, to_float
+from weeutil.weeutil import to_bool
+
+import user.current_json_conditions as conditions
 
 log = logging.getLogger(__name__)
 
@@ -105,7 +107,7 @@ def health(record, health_dict=None):
     kinds = {str(k): str(v).lower() for k, v in (health_dict.get('Batteries') or {}).items()}
     names = dict(BATTERIES)
     names.update({str(k): str(v) for k, v in (health_dict.get('Names') or {}).items()})
-    weak = to_float(health_dict.get('weak_signal', DEFAULT_WEAK_SIGNAL))
+    weak = conditions.number_option(health_dict, 'weak_signal', DEFAULT_WEAK_SIGNAL)
 
     batteries = {f: _number(record.get(f)) for f in BATTERIES if _number(record.get(f)) is not None}
     voltages = {f: round(_number(record.get(f)), 2) for f in VOLTAGES if _number(record.get(f)) is not None}

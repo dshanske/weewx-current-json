@@ -263,10 +263,10 @@ class TestGenerator(unittest.TestCase):
             'CurrentJSON': {'Conditions': {'sources': 'sensors_precipitation, sensors_clouds'}},
         }
         with weewx.manager.open_manager_with_config(self.config, 'wx_binding', initialize=True) as manager:
-            # An hour of five-minute records, the last two with 0.05 in of rain each.
+            # An hour of five-minute records, the last two with 0.05 in of rain each, at 0.05 in/h.
             for i in range(12):
                 record = dict(RECORD, dateTime=RECORD['dateTime'] - (11 - i) * 300, rain=0.05 if i >= 10 else 0.0)
-                record['rainRate'] = 0.0
+                record['rainRate'] = 0.05 if i >= 10 else 0.0
                 manager.addRecord(record)
 
     def tearDown(self):
@@ -288,7 +288,7 @@ class TestGenerator(unittest.TestCase):
                           'timezone': 'America/New_York', 'utc_offset': -14400}, document['station'])
         self.assertEqual(21.5, document['observations']['temperature'])
         self.assertEqual(2.54, document['observations']['rain'], 'The last hour of rain, in mm.')
-        # Rain in the hour makes it light rain; sensors_precipitation comes first.
+        # Rain falling at 1.27 mm/h is light rain; sensors_precipitation comes first.
         self.assertEqual(500, document['observations']['code'])
         # 412 W/m^2 of a clear sky's 820 is scattered cloud, measured at the station.
         self.assertEqual(44, document['observations']['cloudiness'])
@@ -353,8 +353,25 @@ class TestGenerator(unittest.TestCase):
         document = self.run_generator(record)
         self.assertEqual(7.62, document['observations']['snow'], 'Three records of 0.1 in, in mm.')
         self.assertEqual(76.2, document['observations']['snowdepth'])
-        # setUp's records also have rain in the last hour, above freezing: rain and snow.
+        # setUp's records have rain in the last hour, but the rain rate is now 0: only snow.
+        self.assertEqual(601, document['observations']['code'])
+        # With the rain still falling, above freezing, it is rain and snow.
+        document = self.run_generator(dict(record, rainRate=0.05))
         self.assertEqual(616, document['observations']['code'])
+
+    def test_rain_stopped(self):
+        # Rain fell in the last hour, but the rate is 0 now: not raining, so the sky gives the code.
+        document = self.run_generator(dict(RECORD, rainRate=0.0))
+        self.assertEqual(2.54, document['observations']['rain'])
+        self.assertEqual(802, document['observations']['code'])
+        self.assertEqual('sensors_clouds', document['derived']['code'])
+
+    def test_invalid_timezone(self):
+        self.config['CurrentJSON']['timezone'] = 'Mars/Olympus_Mons'
+        with self.assertLogs('user.current_json', 'ERROR'):
+            document = self.run_generator()
+        self.assertEqual('America/New_York', document['station']['timezone'], "The computer's zone instead.")
+        self.assertEqual(-14400, document['station']['utc_offset'])
 
     def test_uses_report_record(self):
         record = dict(RECORD, outTemp=50.0, rainRate=0.0)

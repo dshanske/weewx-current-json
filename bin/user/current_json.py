@@ -16,7 +16,7 @@ weather provider of the Simple Location WordPress plugin:
       "units": "metric",
       "station": {"id": "...", "name": "...", "latitude": ..., "longitude": ..., "altitude": ...},
       "observations": {"temperature": 21.5, "humidity": 60, ...},
-      "derived": {"code": "sensorsclouds", "cloudiness": "sensorsclouds", "aqi": "us_epa"},
+      "derived": {"code": "sensors_clouds", "cloudiness": "sensors_clouds", "aqi": "us_epa"},
       "today": {"temperature_max": 24.3, "temperature_max_time": 1761228000, ...},
       "trend": {"hours": 3, "pressure": -1.2, "temperature": 2.4},
       "almanac": {"sunrise": 1761218383, "sunset": 1761257375, "moon_phase": 1, ...},
@@ -291,7 +291,11 @@ def station_from_config(config_dict, stn_info=None, timestamp=None):
             attribution['url'] = str(attribution_url)
         station['attribution'] = attribution
     if timestamp is not None:
-        timezone = str(sloc_dict.get('timezone') or '') or local_timezone()
+        timezone = str(sloc_dict.get('timezone') or '').strip()
+        if timezone and _zone(timezone) is None:
+            log.error("Ignoring timezone %r: not a known IANA time zone", timezone)
+            timezone = ''
+        timezone = timezone or local_timezone()
         if timezone:
             station['timezone'] = timezone
         station['utc_offset'] = utc_offset(timestamp, timezone)
@@ -542,7 +546,7 @@ class CurrentJSONGenerator(weewx.reportengine.ReportGenerator):
         """
         try:
             total = weewx.xtypes.get_aggregate(field, TimeSpan(timestamp - 3600, timestamp), 'sum', manager)
-        except (weewx.UnknownType, weewx.UnknownAggregation):
+        except (weewx.UnknownType, weewx.UnknownAggregation, weewx.CannotCalculate):
             return None
         if total is None or total.value is None:
             return None
@@ -569,7 +573,7 @@ class CurrentJSONGenerator(weewx.reportengine.ReportGenerator):
             span = TimeSpan(timestamp - (age + 1) * 3600, timestamp - age * 3600)
             try:
                 mean = weewx.xtypes.get_aggregate(field, span, 'avg', manager)
-            except (weewx.UnknownType, weewx.UnknownAggregation):
+            except (weewx.UnknownType, weewx.UnknownAggregation, weewx.CannotCalculate):
                 return []
             if mean is None or mean.value is None:
                 means.append(None)
@@ -638,7 +642,7 @@ class CurrentJSONGenerator(weewx.reportengine.ReportGenerator):
         try:
             total = weewx.xtypes.get_aggregate('lightning_strike_count', TimeSpan(timestamp - 3600, timestamp), 'sum',
                                                manager)
-        except (weewx.UnknownType, weewx.UnknownAggregation):
+        except (weewx.UnknownType, weewx.UnknownAggregation, weewx.CannotCalculate):
             return {}
         if total is None or total.value is None:
             return {}

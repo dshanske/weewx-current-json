@@ -144,7 +144,7 @@ class TestReadForecast(unittest.TestCase):
         periods = self.read()['periods']
         self.assertEqual({
             'name': 'Tonight', 'time': NOW, 'end': NOW + 12 * HOUR, 'daytime': False, 'temperature': 12.8,
-            'windspeed': 2.24, 'windspeed_max': 4.47, 'winddegree': 180, 'pop': 60, 'code': 211,
+            'windspeed': 2.24, 'windspeed_max': 4.47, 'winddegree': 180, 'pop': 60, 'code': 201,
             'summary': 'Chance Showers And Thunderstorms', 'details': 'Showers likely after 2am.',
         }, periods[0])
         self.assertEqual(['Tonight', 'Friday'], [p['name'] for p in periods])

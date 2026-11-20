@@ -1,5 +1,17 @@
 # Changes
 
+## Unreleased
+
+* A setting that isn't a number, such as `storm_gap`, `weak_signal` or `metar_max_age`, is logged
+  and replaced by its default, rather than stopping the file from being written.
+* A station with a rain or snow rate no longer reports rain or snow for up to an hour after it
+  stops: with a rate, rain is falling only while the rate is above 0.
+* METAR thunderstorms with hail are 233, freezing drizzle 309, and blowing or drifting snow is
+  windy (400) rather than snow. The NWS `tsra` icons are 201, a thunderstorm with rain, as METAR's
+  TSRA is.
+* An unknown `timezone` is ignored, with an error in the log, rather than written to the file.
+* A reading WeeWX can't calculate leaves its value out rather than stopping the file.
+
 ## 0.3.0
 
 * Adds `history`, each reading over the last 24 hours in half-hour intervals, for charts, set by

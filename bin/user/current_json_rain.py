@@ -18,7 +18,9 @@ import logging
 import weewx
 import weewx.units
 import weewx.xtypes
-from weeutil.weeutil import TimeSpan, to_bool, to_float
+from weeutil.weeutil import TimeSpan, to_bool
+
+import user.current_json_conditions as conditions
 
 log = logging.getLogger(__name__)
 
@@ -32,7 +34,7 @@ def options_from_config(rain_dict):
     rain_dict = rain_dict or {}
     if not to_bool(rain_dict.get('enable', True)):
         return None
-    gap = to_float(rain_dict.get('storm_gap', DEFAULT_STORM_GAP_HOURS))
+    gap = conditions.number_option(rain_dict, 'storm_gap', DEFAULT_STORM_GAP_HOURS)
     return {'storm_gap': max(1.0, gap) * 3600}
 
 
@@ -45,7 +47,7 @@ def read_rain(manager, timestamp, storm_gap=DEFAULT_STORM_GAP_HOURS * 3600):
         total = weewx.xtypes.get_aggregate('rain', TimeSpan(timestamp - 86400, timestamp), 'sum', manager)
         if total is not None and total.value is not None:
             section['last_24h'] = round(weewx.units.convert(total, 'mm').value, 2)
-    except (weewx.UnknownType, weewx.UnknownAggregation):
+    except (weewx.UnknownType, weewx.UnknownAggregation, weewx.CannotCalculate):
         pass
     last = last_rain(manager, timestamp)
     if last is None:
